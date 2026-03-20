@@ -50,6 +50,22 @@ enum Theme {
             endPoint:   .bottomTrailing
         )
     }
+
+    /// Viridis scientific colour scale — purple→blue→teal→green→yellow.
+    /// Used for elevation legend bars and telemetry range indicators.
+    static var viridisGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(hex: "440154"),
+                Color(hex: "3b528b"),
+                Color(hex: "21918c"),
+                Color(hex: "5ec962"),
+                Color(hex: "fde725")
+            ],
+            startPoint: .leading,
+            endPoint:   .trailing
+        )
+    }
 }
 
 // MARK: - Color hex initialiser

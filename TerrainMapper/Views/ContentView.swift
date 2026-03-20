@@ -55,6 +55,9 @@ struct ContentView: View {
                 }
         }
         .environmentObject(pipeline)
+        // Fix tab bar appearance to match dark design language
+        .toolbarBackground(Theme.surfaceContainerLow, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
     }
 
     // MARK: - Session processing

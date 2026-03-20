@@ -1,24 +1,22 @@
 // SurveyView.swift
 // TerrainMapper
 //
-// Live survey screen.  Shows a satellite map with captured points overlaid as
-// elevation-coloured circles, and a bottom panel with sensor status + controls.
+// Live survey screen — "Digital Theodolite" layout.
+// Full-bleed satellite map; floating glassmorphism header and bottom panel.
 //
-// Layout:
-//   ┌──────────────────────────────────┐
-//   │  Top bar: session title + End    │
-//   ├──────────────────────────────────┤
-//   │                                  │
-//   │    MKMapView (satellite)         │
-//   │    • captured points as circles  │
-//   │    • colour gradient by elev     │
-//   │                                  │
-//   ├──────────────────────────────────┤
-//   │  Bottom panel (sheet-style)      │
-//   │  Spirit level | GPS | Baro | Alt │
-//   │  [────── Capture Point ──────]   │
-//   │  N points · HH:MM:SS elapsed     │
-//   └──────────────────────────────────┘
+// Layout (no NavigationStack):
+//   ┌──────────────────────────────────────┐
+//   │  ◈ TERRAIN MAPPER   [undo][fit][End] │  ← floating topBar
+//   │                                      │
+//   │    Full-bleed MKMapView              │
+//   │    (extends behind status bar)       │
+//   │                                      │
+//   │  ┌────────────────────────────────┐  │
+//   │  │ TILT  GPS ACC  MOTION    ALT   │  │  ← glassmorphism panel
+//   │  │ [──────── Capture Point ─────] │  │
+//   │  │ TELEMETRY        viridis ████  │  │
+//   │  └────────────────────────────────┘  │
+//   └──────────────────────────────────────┘
 
 import SwiftUI
 import MapKit
@@ -42,20 +40,18 @@ struct SurveyView: View {
     @State private var pathTrackCoordinates:  [CLLocationCoordinate2D] = []
     @State private var cameraPosition:        MapCameraPosition = .automatic
     @State private var isCapturing:           Bool = false
-    @State private var captureError:     String?
-    @State private var showError:        Bool = false
-    @State private var elapsedSeconds:   Int = 0
-    @State private var sessionStarted:   Bool = false
+    @State private var captureError:          String?
+    @State private var showError:             Bool = false
+    @State private var elapsedSeconds:        Int = 0
+    @State private var sessionStarted:        Bool = false
     @State private var showLiDARFallbackAlert: Bool = false
-    @State private var showEndWarning: Bool = false
-    @State private var sessionName:      String = ""
-    @State private var showNameSheet:    Bool   = false
+    @State private var showEndWarning:        Bool = false
+    @State private var sessionName:           String = ""
+    @State private var showNameSheet:         Bool   = false
 
-    // Elevation range for colour mapping (updated as points arrive)
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
 
-    // Brief toast shown after each successful capture
     @State private var captureToastElevation: Double? = nil
     @State private var captureToastTask: Task<Void, Never>? = nil
 
@@ -64,109 +60,31 @@ struct SurveyView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // ── Map ───────────────────────────────────────────────────
-                Map(position: $cameraPosition) {
-                    ForEach(capturedPoints) { point in
-                        Annotation("", coordinate: point.clCoordinate) {
-                            SurveyPointMarker(
-                                elevation: point.groundElevation,
-                                elevMin:   elevMin,
-                                elevMax:   elevMax,
-                                isOutlier: point.isOutlier
-                            )
-                        }
-                    }
-                    // Survey path polyline (explicit captures)
-                    if capturedPoints.count >= 2 {
-                        MapPolyline(coordinates: capturedPoints.map(\.clCoordinate))
-                            .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [4, 4]))
-                    }
-                    // Passive GPS path-track breadcrumbs — faint teal trail
-                    if pathTrackCoordinates.count >= 2 {
-                        MapPolyline(coordinates: pathTrackCoordinates)
-                            .stroke(Theme.primary.opacity(0.45), style: StrokeStyle(lineWidth: 1.5))
-                    }
-                }
-                .mapStyle(.imagery(elevation: .realistic))
-                .mapControls {
-                    MapCompass()
-                    MapUserLocationButton()
-                }
-                .ignoresSafeArea(edges: .top)
-                .overlay(alignment: .top) {
-                    if let elev = captureToastElevation {
-                        HStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text(String(format: "Captured  %.2f m", elev))
-                                .font(.subheadline.bold())
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(.regularMaterial, in: Capsule())
-                        .padding(.top, 12)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-                .animation(.spring(duration: 0.35), value: captureToastElevation != nil)
+        ZStack(alignment: .bottom) {
+            // Full-bleed satellite map
+            mapLayer
 
-                // ── Bottom panel ──────────────────────────────────────────
-                VStack(spacing: 0) {
-                    Divider()
-                    sensorStatusRow
-                        .padding(.horizontal)
-                        .padding(.top, 12)
-                    captureButton
-                        .padding(.horizontal)
-                        .padding(.top, 10)
-                    sessionFooter
-                        .padding(.horizontal)
-                        .padding(.vertical, 10)
-                }
-                .background(.regularMaterial)
+            // Floating top bar (sits within safe area, above map)
+            VStack(spacing: 0) {
+                topBar
+                Spacer()
             }
-            .navigationTitle(sessionStarted ? "Surveying" : "Ready to Survey")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    if !sessionStarted {
-                        Button("Start") { showNameSheet = true }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.green)
-                    }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    if sessionStarted && !capturedPoints.isEmpty {
-                        Button {
-                            if let removed = engine.undoLastPoint() {
-                                capturedPoints.removeAll { $0.id == removed.id }
-                                let all = capturedPoints.map(\.groundElevation)
-                                elevMin = all.min() ?? 0
-                                elevMax = max(elevMin + 0.01, all.max() ?? 1)
-                            }
-                        } label: {
-                            Label("Undo", systemImage: "arrow.uturn.backward")
-                        }
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if capturedPoints.count >= 2 {
-                        Button {
-                            fitMapToPoints()
-                        } label: {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        }
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if sessionStarted {
-                        Button("End Survey") { checkEndSession() }
-                            .foregroundStyle(.red)
-                    }
+
+            // Bottom survey panel (sits above tab bar)
+            surveyPanel
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+        }
+        // Toast notification floats above the top bar
+        .overlay(alignment: .top) {
+            Group {
+                if let elev = captureToastElevation {
+                    captureToastView(elevation: elev)
+                        .padding(.top, 80)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .animation(.spring(duration: 0.35), value: captureToastElevation != nil)
         }
         .onReceive(timer) { _ in
             if sessionStarted { elapsedSeconds += 1 }
@@ -192,102 +110,272 @@ struct SurveyView: View {
             Text("Only \(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s") captured so far. At least 6 are recommended — fewer points make the terrain model less reliable. You can keep surveying to improve accuracy.")
         }
         .sheet(isPresented: $showNameSheet) {
-            NavigationStack {
-                Form {
-                    Section {
-                        TextField("e.g. Front paddock, North fence line…", text: $sessionName)
-                            .autocorrectionDisabled(false)
-                    } header: {
-                        Text("Session Name (optional)")
-                    } footer: {
-                        Text("Leave blank to auto-name by date and time.")
-                    }
-                }
-                .navigationTitle("New Survey Session")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") { showNameSheet = false }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Start") {
-                            showNameSheet = false
-                            startSession()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green)
-                    }
-                }
-            }
-            .presentationDetents([.medium])
+            sessionNameSheet
         }
     }
 
-    // MARK: - Sensor status row
+    // MARK: - Map layer
 
-    private var sensorStatusRow: some View {
+    private var mapLayer: some View {
+        Map(position: $cameraPosition) {
+            ForEach(capturedPoints) { point in
+                Annotation("", coordinate: point.clCoordinate) {
+                    SurveyPointMarker(
+                        elevation: point.groundElevation,
+                        elevMin:   elevMin,
+                        elevMax:   elevMax,
+                        isOutlier: point.isOutlier
+                    )
+                }
+            }
+            if capturedPoints.count >= 2 {
+                MapPolyline(coordinates: capturedPoints.map(\.clCoordinate))
+                    .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [4, 4]))
+            }
+            if pathTrackCoordinates.count >= 2 {
+                MapPolyline(coordinates: pathTrackCoordinates)
+                    .stroke(Theme.primary.opacity(0.45), style: StrokeStyle(lineWidth: 1.5))
+            }
+        }
+        .mapStyle(.imagery(elevation: .realistic))
+        .mapControls {
+            MapCompass()
+            MapUserLocationButton()
+        }
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Floating top bar
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            // Brand mark
+            HStack(spacing: 8) {
+                VStack(spacing: 2) {
+                    Rectangle().fill(Theme.primary.opacity(0.4)).frame(width: 18, height: 1.5)
+                    Rectangle().fill(Theme.primary.opacity(0.7)).frame(width: 24, height: 1.5)
+                    Rectangle().fill(Theme.primary).frame(width: 14, height: 1.5)
+                }
+                Text("TERRAIN MAPPER")
+                    .font(.system(size: 14, weight: .black))
+                    .tracking(-0.3)
+                    .foregroundStyle(Theme.primary)
+            }
+
+            Spacer()
+
+            // Action controls
+            HStack(spacing: 8) {
+                if sessionStarted && !capturedPoints.isEmpty {
+                    mapControlButton(systemImage: "arrow.uturn.backward") {
+                        if let removed = engine.undoLastPoint() {
+                            capturedPoints.removeAll { $0.id == removed.id }
+                            let all = capturedPoints.map(\.groundElevation)
+                            elevMin = all.min() ?? 0
+                            elevMax = max(elevMin + 0.01, all.max() ?? 1)
+                        }
+                    }
+                }
+                if capturedPoints.count >= 2 {
+                    mapControlButton(systemImage: "arrow.up.left.and.arrow.down.right") {
+                        fitMapToPoints()
+                    }
+                }
+                if !sessionStarted {
+                    Button { showNameSheet = true } label: {
+                        Text("Start")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color(hex: "003828"))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Theme.primaryGradient, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                } else {
+                    Button { checkEndSession() } label: {
+                        Text("End")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(Theme.background.opacity(0.5))
+        .background(.ultraThinMaterial)
+    }
+
+    private func mapControlButton(systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.onSurface)
+                .frame(width: 38, height: 38)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // MARK: - Survey panel (glassmorphism)
+
+    private var surveyPanel: some View {
+        VStack(spacing: 14) {
+            sensorGrid
+            captureButton
+            telemetryFooter
+        }
+        .padding(20)
+        .background(Theme.background.opacity(0.45))
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+        }
+        .shadow(color: Color(hex: "3adfab").opacity(0.06), radius: 24)
+    }
+
+    // MARK: - Sensor grid (4 columns)
+
+    private var sensorGrid: some View {
         HStack(spacing: 0) {
-            // Spirit level
-            TiltMeterView(
-                tiltAngle: engine.tiltAngleDegrees * .pi / 180,
-                gravityX:  engine.gravityX,
-                gravityY:  engine.gravityY,
-                isStationary: engine.imuIsStationary,
-                stationaryProgress: engine.stationaryProgress
-            )
-            .frame(width: 80)
 
-            Divider().frame(height: 60)
+            // Tilt bubble
+            VStack(spacing: 4) {
+                compactTiltBubble
+                Text("TILT")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
+            }
+            .frame(maxWidth: .infinity)
 
-            // GPS
+            panelDivider
+
+            // GPS accuracy
             VStack(spacing: 3) {
-                Image(systemName: "location.fill")
-                    .foregroundStyle(gpsColor)
-                Text("GPS")
-                    .font(.caption2).foregroundStyle(.secondary)
                 Text("±\(Int(engine.gpsAccuracy)) m")
-                    .font(.system(.caption, design: .monospaced, weight: .semibold))
+                    .font(.system(.subheadline, design: .monospaced, weight: .bold))
                     .foregroundStyle(gpsColor)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                Text("GPS ACC")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
             }
             .frame(maxWidth: .infinity)
 
-            Divider().frame(height: 60)
+            panelDivider
 
-            // IMU
+            // Motion status
             VStack(spacing: 3) {
-                Image(systemName: engine.imuIsStationary ? "checkmark.circle.fill" : "waveform.path")
-                    .foregroundStyle(engine.imuIsStationary ? .green : .orange)
+                HStack(spacing: 3) {
+                    Image(systemName: engine.imuIsStationary ? "checkmark.circle.fill" : "waveform.path")
+                        .font(.system(size: 12))
+                        .foregroundStyle(engine.imuIsStationary ? Theme.primary : .orange)
+                    Text(engine.imuIsStationary ? "STILL" : "MOVING")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(engine.imuIsStationary ? Theme.primary : .orange)
+                }
                 Text("MOTION")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Text(engine.imuIsStationary ? "STILL" : "MOVING")
-                    .font(.system(.caption, design: .monospaced, weight: .semibold))
-                    .foregroundStyle(engine.imuIsStationary ? .green : .orange)
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
             }
             .frame(maxWidth: .infinity)
 
-            Divider().frame(height: 60)
+            panelDivider
 
-            // Altitude
+            // Fused altitude
             VStack(spacing: 2) {
-                Image(systemName: "arrow.up.and.down")
-                    .foregroundStyle(.blue)
-                Text("ALT")
-                    .font(.caption2).foregroundStyle(.secondary)
                 Text(String(format: "%.1f m", engine.currentAltitude))
-                    .font(.system(.caption, design: .monospaced, weight: .semibold))
-                    .foregroundStyle(.blue)
+                    .font(.system(.subheadline, design: .monospaced, weight: .bold))
+                    .foregroundStyle(Theme.primary)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
                 Text(String(format: "±%.1f", engine.altitudeUncertainty))
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.blue.opacity(0.7))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Theme.primary.opacity(0.6))
+                Text("ALT")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
             }
             .frame(maxWidth: .infinity)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
+    }
+
+    private var panelDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.1))
+            .frame(width: 0.5, height: 52)
+    }
+
+    /// Compact spirit-level bubble — inline replacement for TiltMeterView
+    /// in the dense sensor panel.
+    private var compactTiltBubble: some View {
+        ZStack {
+            // Stationary progress arc
+            Circle()
+                .trim(from: 0, to: CGFloat(engine.stationaryProgress))
+                .stroke(
+                    Theme.primary.opacity(engine.stationaryProgress > 0.95 ? 0.9 : 0.4),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.1), value: engine.stationaryProgress)
+
+            // Outer ring
+            Circle()
+                .strokeBorder(tiltRingColor, lineWidth: 1.5)
+
+            // Crosshair
+            Path { p in
+                p.move(to: CGPoint(x: 18, y: 12)); p.addLine(to: CGPoint(x: 18, y: 24))
+                p.move(to: CGPoint(x: 12, y: 18)); p.addLine(to: CGPoint(x: 24, y: 18))
+            }
+            .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+
+            // Bubble
+            let off = tiltBubbleOffset
+            Circle()
+                .fill(tiltBubbleColor)
+                .frame(width: 8, height: 8)
+                .offset(x: off.width, y: off.height)
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: off)
+        }
+        .frame(width: 36, height: 36)
+    }
+
+    private var tiltRingColor: Color {
+        let t = engine.tiltAngleDegrees
+        if t < 3 { return Theme.primary.opacity(0.7) }
+        if t < 8 { return .yellow.opacity(0.7) }
+        return .red.opacity(0.7)
+    }
+
+    private var tiltBubbleColor: Color {
+        let t = engine.tiltAngleDegrees
+        if t < 3 { return Theme.primary }
+        if t < 8 { return .yellow }
+        return .red
+    }
+
+    private var tiltBubbleOffset: CGSize {
+        let max: CGFloat = 12
+        let rawX = CGFloat(engine.gravityX) * 12
+        let rawY = CGFloat(-engine.gravityY) * 12
+        let dist = sqrt(rawX * rawX + rawY * rawY)
+        let s = dist > max ? max / dist : 1.0
+        return CGSize(width: rawX * s, height: rawY * s)
     }
 
     // MARK: - Capture button
 
-    /// True when GPS accuracy is too poor to record a reliable position (>30 m).
     private var gpsTooInaccurate: Bool { engine.gpsAccuracy > 30 }
 
     private var captureButton: some View {
@@ -296,14 +384,11 @@ struct SurveyView: View {
                 captureButtonBackground
                 HStack(spacing: 10) {
                     if !sessionStarted {
-                        Image(systemName: "play.circle.fill")
-                            .font(.title3).foregroundStyle(.white)
-                        Text("Tap Start to begin")
-                            .font(.headline).foregroundStyle(.white)
+                        Image(systemName: "play.circle.fill").font(.title3)
+                        Text("Tap Start to begin").font(.system(size: 17, weight: .bold))
                     } else if isCapturing {
                         VStack(spacing: 6) {
-                            Text("Sampling LiDAR…")
-                                .font(.headline).foregroundStyle(.white)
+                            Text("Sampling LiDAR…").font(.system(size: 17, weight: .bold))
                             ProgressView(value: engine.lidarCaptureProgress)
                                 .progressViewStyle(.linear)
                                 .tint(.white)
@@ -311,22 +396,18 @@ struct SurveyView: View {
                         }
                     } else if gpsTooInaccurate {
                         Image(systemName: "location.slash.fill")
-                            .foregroundStyle(.white)
-                        Text("Weak GPS — Move to open sky")
-                            .font(.headline).foregroundStyle(.white)
+                        Text("Weak GPS — Move to open sky").font(.system(size: 17, weight: .bold))
                     } else if !engine.imuIsStationary {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.white)
-                        Text("Hold Steady")
-                            .font(.headline).foregroundStyle(.white)
+                        Text("Hold Steady").font(.system(size: 17, weight: .bold))
                     } else {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title3).foregroundStyle(.white)
-                        Text("Capture Point")
-                            .font(.headline).foregroundStyle(.white)
+                        Image(systemName: "plus.circle.fill").font(.title3)
+                        Text("Capture Point").font(.system(size: 17, weight: .bold))
                     }
                 }
-                .padding(.vertical, 14)
+                .foregroundStyle(.white)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity)
             }
         }
         .disabled(!sessionStarted || isCapturing || !engine.isSessionActive || gpsTooInaccurate)
@@ -335,27 +416,119 @@ struct SurveyView: View {
         .animation(.easeInOut(duration: 0.3), value: gpsTooInaccurate)
     }
 
-    /// Shape style for the capture button background — gradient when ready,
-    /// flat semantic colour otherwise.
     @ViewBuilder
     private var captureButtonBackground: some View {
         if !sessionStarted {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.secondary.opacity(0.25))
+            RoundedRectangle(cornerRadius: 14).fill(Theme.surfaceContainerHighest)
         } else if isCapturing {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Theme.primary.opacity(0.75))
+            RoundedRectangle(cornerRadius: 14).fill(Theme.primary.opacity(0.75))
         } else if gpsTooInaccurate {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.red.opacity(0.8))
+            RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.8))
         } else if !engine.imuIsStationary {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.orange)
+            RoundedRectangle(cornerRadius: 14).fill(Color.orange)
         } else {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Theme.primaryGradient)
+            RoundedRectangle(cornerRadius: 14).fill(Theme.primaryGradient)
         }
     }
+
+    // MARK: - Telemetry footer
+
+    private var telemetryFooter: some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("TELEMETRY")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(2)
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.5))
+                HStack(spacing: 12) {
+                    HStack(spacing: 3) {
+                        Text("\(capturedPoints.count)")
+                            .font(.system(.body, design: .monospaced, weight: .bold))
+                            .foregroundStyle(Theme.onSurface)
+                        Text("pts")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.onSurfaceVariant)
+                    }
+                    HStack(spacing: 3) {
+                        Text(formattedElapsed)
+                            .font(.system(.body, design: .monospaced, weight: .bold))
+                            .foregroundStyle(Theme.onSurface)
+                        Text("min")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.onSurfaceVariant)
+                    }
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Theme.viridisGradient
+                    .frame(width: 88, height: 5)
+                    .clipShape(Capsule())
+
+                if capturedPoints.count >= 2 {
+                    Text(String(format: "%.1f – %.1f m", elevMin, elevMax))
+                        .font(.system(.footnote, design: .monospaced, weight: .semibold))
+                        .foregroundStyle(Theme.onSurface)
+                } else {
+                    Text("no points yet")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.5))
+                }
+            }
+        }
+    }
+
+    // MARK: - Toast
+
+    private func captureToastView(elevation: Double) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Theme.primary)
+            Text(String(format: "Captured  %.2f m", elevation))
+                .font(.subheadline.bold())
+                .foregroundStyle(Theme.onSurface)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+    }
+
+    // MARK: - Session name sheet
+
+    private var sessionNameSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("e.g. Front paddock, North fence line…", text: $sessionName)
+                        .autocorrectionDisabled(false)
+                } header: {
+                    Text("Session Name (optional)")
+                } footer: {
+                    Text("Leave blank to auto-name by date and time.")
+                }
+            }
+            .navigationTitle("New Survey Session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { showNameSheet = false }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Start") {
+                        showNameSheet = false
+                        startSession()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.primary)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    // MARK: - Toast helper
 
     private func showCaptureToast(elevation: Double) {
         captureToastTask?.cancel()
@@ -367,32 +540,7 @@ struct SurveyView: View {
         }
     }
 
-    // MARK: - Session footer
-
-    private var sessionFooter: some View {
-        HStack {
-            Label("\(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s")",
-                  systemImage: "mappin")
-                .font(.caption).foregroundStyle(.secondary)
-
-            // Live elevation range — appears once we have ≥ 2 points
-            if capturedPoints.count >= 2 {
-                Spacer()
-                Text(liveElevationRange)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-            Label(formattedElapsed, systemImage: "clock")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var liveElevationRange: String {
-        String(format: "↕ %.1f–%.1f m", elevMin, elevMax)
-    }
+    // MARK: - Helpers
 
     private var formattedElapsed: String {
         let h = elapsedSeconds / 3600
@@ -448,7 +596,7 @@ struct SurveyView: View {
         withAnimation {
             cameraPosition = .region(MKCoordinateRegion(
                 center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
-                span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+                span:   MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
             ))
         }
     }
@@ -464,23 +612,17 @@ struct SurveyView: View {
             let point = try await engine.capturePoint()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             capturedPoints.append(point)
-
-            // Show brief elevation toast then auto-dismiss
             showCaptureToast(elevation: point.groundElevation)
 
-            // Persist incrementally after every successful capture
             if let snapshot = engine.currentSessionSnapshot {
                 sessionStore.save(session: snapshot)
             }
 
-            // Update elevation range
             let all = capturedPoints.map(\.groundElevation)
             elevMin = all.min() ?? 0
             elevMax = max(elevMin + 0.01, all.max() ?? 1)
 
-            // Re-centre map on the new point
-            let coord = CLLocationCoordinate2D(latitude: point.latitude,
-                                               longitude: point.longitude)
+            let coord = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
             withAnimation {
                 cameraPosition = .region(MKCoordinateRegion(
                     center: coord,
@@ -507,13 +649,13 @@ struct SurveyView: View {
         guard !isCapturing else { return }
         isCapturing = true
         defer { isCapturing = false }
-        // Build a point using GPS + stick height instead of LiDAR
+
         guard let location = engine.gpsManager.currentLocation else {
             captureError = "No GPS location available."
             showError = true
             return
         }
-        let fusedAlt = engine.currentAltitude
+        let fusedAlt  = engine.currentAltitude
         let groundElev = fusedAlt - settings.stickHeight
         let point = SurveyPoint(
             id:                  UUID(),
@@ -534,7 +676,7 @@ struct SurveyView: View {
         engine.appendPoint(point)
         capturedPoints.append(point)
         showCaptureToast(elevation: point.groundElevation)
-        // Persist after stick-height fallback capture
+
         if let snapshot = engine.currentSessionSnapshot {
             sessionStore.save(session: snapshot)
         }
@@ -548,10 +690,9 @@ struct SurveyView: View {
             ))
         }
     }
-
 }
 
-// MARK: - Supporting views
+// MARK: - Survey point marker
 
 private struct SurveyPointMarker: View {
     let elevation: Double
@@ -566,7 +707,6 @@ private struct SurveyPointMarker: View {
 
     private var markerColor: Color {
         if isOutlier { return .orange.opacity(0.5) }
-        // Blue (low) → Green (mid) → Red (high)
         if fraction < 0.5 {
             return Color(hue: 0.67 - fraction * 0.67, saturation: 0.8, brightness: 0.9)
         } else {
@@ -581,4 +721,3 @@ private struct SurveyPointMarker: View {
             .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 1))
     }
 }
-
