@@ -95,7 +95,7 @@ final class ExportManager: ObservableObject {
 
     /// Static variant — callable from a `Task.detached` without actor context.
     @discardableResult
-    private static func exportFormatStatic(_ format: ExportFormat, terrain: ProcessedTerrain, to folder: URL) throws -> URL {
+    private nonisolated static func exportFormatStatic(_ format: ExportFormat, terrain: ProcessedTerrain, to folder: URL) throws -> URL {
         let fileName: String
         let data: Data
 
