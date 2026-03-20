@@ -38,9 +38,10 @@ struct SurveyView: View {
 
     // MARK: - State
 
-    @State private var capturedPoints:   [SurveyPoint] = []
-    @State private var cameraPosition:   MapCameraPosition = .automatic
-    @State private var isCapturing:      Bool = false
+    @State private var capturedPoints:        [SurveyPoint] = []
+    @State private var pathTrackCoordinates:  [CLLocationCoordinate2D] = []
+    @State private var cameraPosition:        MapCameraPosition = .automatic
+    @State private var isCapturing:           Bool = false
     @State private var captureError:     String?
     @State private var showError:        Bool = false
     @State private var elapsedSeconds:   Int = 0
@@ -73,10 +74,15 @@ struct SurveyView: View {
                             )
                         }
                     }
-                    // Survey path polyline
+                    // Survey path polyline (explicit captures)
                     if capturedPoints.count >= 2 {
                         MapPolyline(coordinates: capturedPoints.map(\.clCoordinate))
                             .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [4, 4]))
+                    }
+                    // Passive GPS path-track breadcrumbs — faint teal trail
+                    if pathTrackCoordinates.count >= 2 {
+                        MapPolyline(coordinates: pathTrackCoordinates)
+                            .stroke(.teal.opacity(0.45), style: StrokeStyle(lineWidth: 1.5))
                     }
                 }
                 .mapStyle(.imagery(elevation: .realistic))
@@ -144,6 +150,9 @@ struct SurveyView: View {
         }
         .onReceive(timer) { _ in
             if sessionStarted { elapsedSeconds += 1 }
+        }
+        .onReceive(engine.$latestPathTrackPoint.compactMap { $0 }) { point in
+            pathTrackCoordinates.append(point.clCoordinate)
         }
         .alert("Capture Error", isPresented: $showError, presenting: captureError) { _ in
             Button("OK", role: .cancel) {}
@@ -354,7 +363,8 @@ struct SurveyView: View {
     // MARK: - Actions
 
     private func startSession() {
-        capturedPoints = []
+        capturedPoints       = []
+        pathTrackCoordinates = []
         elapsedSeconds = 0
         elevMin = 0; elevMax = 1
         engine.startSession(stickHeight: settings.stickHeight, name: sessionName)
@@ -454,17 +464,19 @@ struct SurveyView: View {
         let fusedAlt = engine.currentAltitude
         let groundElev = fusedAlt - settings.stickHeight
         let point = SurveyPoint(
-            id: UUID(), timestamp: Date(),
-            latitude: location.coordinate.latitude,
-            longitude: location.coordinate.longitude,
-            fusedAltitude: fusedAlt,
-            groundElevation: groundElev,
-            lidarDistance: settings.stickHeight,
-            gpsAltitude: location.altitude,
-            baroAltitudeDelta: engine.barometerManager.currentRelativeAltitude,
-            tiltAngle: engine.imuManager.tiltAngle,
-            horizontalAccuracy: location.horizontalAccuracy,
-            verticalAccuracy: max(location.verticalAccuracy, 0)
+            id:                  UUID(),
+            timestamp:           Date(),
+            latitude:            location.coordinate.latitude,
+            longitude:           location.coordinate.longitude,
+            fusedAltitude:       fusedAlt,
+            groundElevation:     groundElev,
+            lidarDistance:       settings.stickHeight,
+            gpsAltitude:         location.altitude,
+            baroAltitudeDelta:   engine.barometerManager.currentRelativeAltitude,
+            tiltAngle:           engine.imuManager.tiltAngle,
+            horizontalAccuracy:  location.horizontalAccuracy,
+            verticalAccuracy:    max(location.verticalAccuracy, 0),
+            captureType:         .stickHeight
         )
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         engine.appendPoint(point)
@@ -517,8 +529,3 @@ private struct SurveyPointMarker: View {
     }
 }
 
-private extension SurveyPoint {
-    var clCoordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    }
-}

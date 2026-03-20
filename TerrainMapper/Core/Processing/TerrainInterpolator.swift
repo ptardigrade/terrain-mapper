@@ -58,12 +58,15 @@ struct TerrainInterpolator {
     /// Interpolate survey points to a regular grid.
     ///
     /// - Parameters:
-    ///   - points: Valid (non-outlier) survey points.
+    ///   - points: Valid (non-outlier) survey points (full weight 1.0).
+    ///   - pathPoints: Passive GPS breadcrumbs from PathTrackRecorder
+    ///                 (reduced weight 0.2 — gentle shape hints only).
     ///   - resolution: Cell size in metres (overrides stored `gridResolutionMeters`).
     ///   - method: Interpolation algorithm.
     /// - Returns: A `TerrainGrid` with elevation values.
     func interpolate(
         points: [SurveyPoint],
+        pathPoints: [SurveyPoint] = [],
         resolution: Double? = nil,
         method: InterpolationMethod = .idw
     ) -> TerrainGrid {
@@ -76,9 +79,14 @@ struct TerrainInterpolator {
             return emptyGrid(resolution: res)
         }
 
+        // Combine capture points and path-track breadcrumbs.
+        // Bounding box uses ALL points so path-track breadcrumbs that extend
+        // beyond the capture convex-hull still receive interpolated values.
+        let allPoints = points + pathPoints
+
         // ── Compute bounding box & origin ──────────────────────────────────
-        let lats = points.map(\.latitude)
-        let lons = points.map(\.longitude)
+        let lats = allPoints.map(\.latitude)
+        let lons = allPoints.map(\.longitude)
         let minLat = lats.min()!, maxLat = lats.max()!
         let minLon = lons.min()!, maxLon = lons.max()!
 
@@ -97,17 +105,25 @@ struct TerrainInterpolator {
         let width    = max(2, Int(ceil(spanLon / resDeg)))
         let height   = max(2, Int(ceil(spanLat / resDeg)))
 
-        // ── Convert points to local EN metres ─────────────────────────────
-        let localPts: [(x: Double, y: Double, z: Double)] = points.map { p in
+        // ── Convert points to local EN metres (carrying capture weight) ───
+        // Tuple: (easting, northing, groundElevation, interpolationWeight)
+        let localPts: [(x: Double, y: Double, z: Double, w: Double)] = allPoints.map { p in
             let (e, n) = latLonToEN(lat: p.latitude, lon: p.longitude,
                                     originLat: centLat, originLon: centLon)
-            return (e, n, p.groundElevation)
+            return (e, n, p.groundElevation, p.interpolationWeight)
         }
 
-        // ── Fit variogram if kriging ───────────────────────────────────────
+        // ── Fit variogram if kriging (uses capture points only for fitting) ─
+        // Path-track points are excluded from variogram estimation since their
+        // elevation uncertainty would distort the semivariance structure.
         var vario = VariogramParams(c0: 0, c1: 1, a: maxSearchRadiusMeters)
         if case .kriging = method {
-            vario = fitVariogram(points: localPts)
+            let captureLocalPts: [(x: Double, y: Double, z: Double, w: Double)] = points.map { p in
+                let (e, n) = latLonToEN(lat: p.latitude, lon: p.longitude,
+                                        originLat: centLat, originLon: centLon)
+                return (e, n, p.groundElevation, p.interpolationWeight)
+            }
+            vario = fitVariogram(points: captureLocalPts)
         }
 
         // ── Fill grid ─────────────────────────────────────────────────────
@@ -123,13 +139,15 @@ struct TerrainInterpolator {
 
                 // Find neighbours within search radius
                 let neighbours = nearestPoints(localPts, to: (qx, qy),
-                                                maxRadius: maxSearchRadiusMeters)
+                                               maxRadius: maxSearchRadiusMeters)
                 guard neighbours.count >= minNeighbours else { continue }
 
                 switch method {
                 case .idw:
                     elevations[row][col] = idwEstimate(neighbours: neighbours, power: power)
                 case .kriging:
+                    // For kriging, use capture-only points (w=1) to avoid
+                    // the path-track elevation bias corrupting the kriging system.
                     let knnFull = nearestPointsWithCoordinates(localPts, to: (qx, qy),
                                                                maxRadius: maxSearchRadiusMeters)
                     let knn = Array(knnFull.prefix(maxKrigingNeighbours))
@@ -153,7 +171,7 @@ struct TerrainInterpolator {
     // MARK: - IDW
 
     private func idwEstimate(
-        neighbours: [(dist: Double, z: Double)],
+        neighbours: [(dist: Double, z: Double, w: Double)],
         power p: Double
     ) -> Double {
         // Handle case where a point is exactly at the query location
@@ -161,10 +179,13 @@ struct TerrainInterpolator {
             return exact.z
         }
         var wSum = 0.0, wzSum = 0.0
-        for (d, z) in neighbours {
-            let w = 1.0 / pow(d, p)
+        for n in neighbours {
+            // Weight = interpolationWeight / dist^p
+            // LiDAR/stick points (w=1.0) get full influence;
+            // path-track breadcrumbs (w=0.2) contribute gently.
+            let w = n.w / pow(n.dist, p)
             wSum  += w
-            wzSum += w * z
+            wzSum += w * n.z
         }
         return wSum > 0 ? wzSum / wSum : neighbours[0].z
     }
@@ -188,7 +209,7 @@ struct TerrainInterpolator {
     }
 
     /// Fit spherical variogram parameters from the data using method-of-moments.
-    private func fitVariogram(points: [(x: Double, y: Double, z: Double)]) -> VariogramParams {
+    private func fitVariogram(points: [(x: Double, y: Double, z: Double, w: Double)]) -> VariogramParams {
         let n = points.count
         guard n >= 4 else {
             return VariogramParams(c0: 0, c1: 1, a: maxSearchRadiusMeters)
@@ -262,7 +283,8 @@ struct TerrainInterpolator {
 
         // Solve Ax = b via Gaussian elimination with partial pivoting
         guard var x = gaussianElimination(A: A, b: b) else {
-            return idwEstimate(neighbours: neighbours.map { ($0.dist, $0.z) }, power: power)
+            // Kriging neighbours have no capture weight; fall back with full weight (1.0).
+            return idwEstimate(neighbours: neighbours.map { (dist: $0.dist, z: $0.z, w: 1.0) }, power: power)
         }
 
         // Estimate = Σ λᵢ·zᵢ
@@ -273,25 +295,25 @@ struct TerrainInterpolator {
 
     // MARK: - Spatial search
 
-    /// Returns the `(distance, z)` pairs for all points within `maxRadius` of `query`,
-    /// sorted by ascending distance.  Also returns (x, y) for kriging variant.
+    /// Returns the `(distance, z, interpolationWeight)` triples for all points within
+    /// `maxRadius` of `query`, sorted by ascending distance.
     private func nearestPoints(
-        _ pts: [(x: Double, y: Double, z: Double)],
+        _ pts: [(x: Double, y: Double, z: Double, w: Double)],
         to query: (Double, Double),
         maxRadius: Double
-    ) -> [(dist: Double, z: Double)] {
-        var result: [(dist: Double, z: Double)] = []
+    ) -> [(dist: Double, z: Double, w: Double)] {
+        var result: [(dist: Double, z: Double, w: Double)] = []
         for p in pts {
             let dx = p.x - query.0, dy = p.y - query.1
             let d  = sqrt(dx*dx + dy*dy)
-            if d <= maxRadius { result.append((d, p.z)) }
+            if d <= maxRadius { result.append((d, p.z, p.w)) }
         }
         return result.sorted { $0.dist < $1.dist }
     }
 
     /// Nearest-neighbours variant that also returns (x, y) for kriging.
     private func nearestPointsWithCoordinates(
-        _ pts: [(x: Double, y: Double, z: Double)],
+        _ pts: [(x: Double, y: Double, z: Double, w: Double)],
         to query: (Double, Double),
         maxRadius: Double
     ) -> [(dist: Double, z: Double, x: Double, y: Double)] {

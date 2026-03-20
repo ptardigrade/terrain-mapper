@@ -38,11 +38,11 @@ enum SensorFusionError: LocalizedError {
         case .captureAlreadyInProgress:
             return "A point capture is already in progress. Wait for it to finish."
         case .stationaryGateTimeout:
-            return "Device did not become stationary within the timeout period."
+            return "Couldn't detect a steady hold — keep the device still and try again."
         case .locationUnavailable:
-            return "No GPS fix available. Move to an open area and try again."
+            return "No GPS signal. Move to open sky, wait a moment, then try again."
         case .lidarCaptureFailed(let error):
-            return "LiDAR capture failed: \(error.localizedDescription)"
+            return "LiDAR reading failed: \(error.localizedDescription). Try again or use the stick height fallback."
         }
     }
 }
@@ -81,10 +81,15 @@ final class SensorFusionEngine: ObservableObject {
     let lidarManager     = LiDARManager()
     let gpsManager       = GPSManager()
 
+    /// Most recent path-track breadcrumb — observed by SurveyView to update
+    /// the faint GPS trail rendered on the live map.
+    @Published private(set) var latestPathTrackPoint: SurveyPoint?
+
     // MARK: - Private
 
     private var kalman = KalmanFilter()
     private var session: SurveySession?
+    private let pathTrackRecorder = PathTrackRecorder()
 
     /// Tracks whether the Kalman filter has received at least one GPS seed.
     private var kalmanInitialised = false
@@ -111,6 +116,14 @@ final class SensorFusionEngine: ObservableObject {
         lidarManager.imuManager = imuManager
         // LiDAR ARSession is started on first capturePoint() call
 
+        // Start passive path-track recording between captures.
+        pathTrackRecorder.onPathPointRecorded = { [weak self] point in
+            guard let self else { return }
+            self.session?.pathTrackPoints.append(point)
+            self.latestPathTrackPoint = point
+        }
+        pathTrackRecorder.start(gpsManager: gpsManager, engine: self)
+
         bindSensorStreams()
         isSessionActive = true
     }
@@ -129,6 +142,7 @@ final class SensorFusionEngine: ObservableObject {
         barometerManager.stop()
         gpsManager.stop()
         lidarManager.pauseSession()
+        pathTrackRecorder.stop()
         cancellables.removeAll()
 
         s.endTime = Date()
@@ -222,8 +236,9 @@ final class SensorFusionEngine: ObservableObject {
 
     // MARK: - Stationary gate
 
-    /// Removes and returns the last captured survey point from the active session.
-    /// Returns nil if there are no points or no active session.
+    /// Removes and returns the last explicitly captured survey point.
+    /// Path-track breadcrumbs in `session.pathTrackPoints` are unaffected.
+    /// Returns nil if there are no capture points or no active session.
     @discardableResult
     func undoLastPoint() -> SurveyPoint? {
         guard session != nil, !session!.points.isEmpty else { return nil }
@@ -232,7 +247,7 @@ final class SensorFusionEngine: ObservableObject {
         return removed
     }
 
-    /// Appends a manually-constructed point to the active session.
+    /// Appends a manually-constructed explicit capture point (LiDAR / stick-height).
     func appendPoint(_ point: SurveyPoint) {
         session?.points.append(point)
         pointCount = session?.points.count ?? 0

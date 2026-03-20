@@ -21,7 +21,17 @@ struct SurveySession: Identifiable, Codable {
     var endTime: Date?
 
     // MARK: - Points
+
+    /// Explicitly captured survey points (LiDAR or stick-height).
+    /// These are the primary measurements — full interpolation weight (1.0).
     var points: [SurveyPoint]
+
+    /// Passive GPS breadcrumbs recorded automatically between captures.
+    /// Stored separately so all existing processing (outlier detection,
+    /// loop closure, PDR refinement) operates only on `points`.
+    /// Fed into the terrain interpolator with reduced weight (0.2) to
+    /// act as soft shape hints between capture locations.
+    var pathTrackPoints: [SurveyPoint]
 
     // MARK: - Configuration
     /// Fallback measurement-stick height (metres) used when LiDAR is unavailable.
@@ -40,13 +50,14 @@ struct SurveySession: Identifiable, Codable {
     // MARK: - Initialisers
 
     init(stickHeight: Double = 2.0, geoidOffset: Double = 0.0, name: String = "") {
-        self.id          = UUID()
-        self.startTime   = Date()
-        self.endTime     = nil
-        self.points      = []
-        self.stickHeight = stickHeight
-        self.name        = name
-        self.geoidOffset = geoidOffset
+        self.id              = UUID()
+        self.startTime       = Date()
+        self.endTime         = nil
+        self.points          = []
+        self.pathTrackPoints = []
+        self.stickHeight     = stickHeight
+        self.name            = name
+        self.geoidOffset     = geoidOffset
     }
 }
 

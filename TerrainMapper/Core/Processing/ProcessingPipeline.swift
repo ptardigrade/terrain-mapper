@@ -130,19 +130,21 @@ final class ProcessingPipeline: ObservableObject {
             for i in points.indices {
                 let p = points[i]
                 points[i] = SurveyPoint(
-                    id:                 p.id,
-                    timestamp:          p.timestamp,
-                    latitude:           p.latitude,
-                    longitude:          p.longitude,
-                    fusedAltitude:      p.fusedAltitude      + elevationOffset,
-                    groundElevation:    p.groundElevation    + elevationOffset,
-                    lidarDistance:      p.lidarDistance,
-                    gpsAltitude:        p.gpsAltitude,
-                    baroAltitudeDelta:  p.baroAltitudeDelta,
-                    tiltAngle:          p.tiltAngle,
-                    horizontalAccuracy: p.horizontalAccuracy,
-                    verticalAccuracy:   p.verticalAccuracy,
-                    isOutlier:          p.isOutlier
+                    id:                  p.id,
+                    timestamp:           p.timestamp,
+                    latitude:            p.latitude,
+                    longitude:           p.longitude,
+                    fusedAltitude:       p.fusedAltitude      + elevationOffset,
+                    groundElevation:     p.groundElevation    + elevationOffset,
+                    lidarDistance:       p.lidarDistance,
+                    gpsAltitude:         p.gpsAltitude,
+                    baroAltitudeDelta:   p.baroAltitudeDelta,
+                    tiltAngle:           p.tiltAngle,
+                    horizontalAccuracy:  p.horizontalAccuracy,
+                    verticalAccuracy:    p.verticalAccuracy,
+                    isOutlier:           p.isOutlier,
+                    captureType:         p.captureType,
+                    interpolationWeight: p.interpolationWeight
                 )
             }
         }
@@ -152,7 +154,11 @@ final class ProcessingPipeline: ObservableObject {
         let validPoints = points.filter { !$0.isOutlier }
         var interp = TerrainInterpolator()
         interp.gridResolutionMeters = gridResolution
-        let grid = interp.interpolate(points: validPoints, method: interpolationMethod)
+        let grid = interp.interpolate(
+            points:     validPoints,
+            pathPoints: session.pathTrackPoints,
+            method:     interpolationMethod
+        )
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
         updateProgress("Triangulating mesh…")
@@ -210,17 +216,21 @@ final class ProcessingPipeline: ObservableObject {
                 let lon = pA.longitude + t * (pB.longitude - pA.longitude)
                 let p   = points[i]
                 points[i] = SurveyPoint(
-                    id: p.id, timestamp: p.timestamp,
-                    latitude: lat, longitude: lon,
-                    fusedAltitude:      p.fusedAltitude,
-                    groundElevation:    p.groundElevation,
-                    lidarDistance:      p.lidarDistance,
-                    gpsAltitude:        p.gpsAltitude,
-                    baroAltitudeDelta:  p.baroAltitudeDelta,
-                    tiltAngle:          p.tiltAngle,
-                    horizontalAccuracy: p.horizontalAccuracy,
-                    verticalAccuracy:   p.verticalAccuracy,
-                    isOutlier:          p.isOutlier
+                    id:                  p.id,
+                    timestamp:           p.timestamp,
+                    latitude:            lat,
+                    longitude:           lon,
+                    fusedAltitude:       p.fusedAltitude,
+                    groundElevation:     p.groundElevation,
+                    lidarDistance:       p.lidarDistance,
+                    gpsAltitude:         p.gpsAltitude,
+                    baroAltitudeDelta:   p.baroAltitudeDelta,
+                    tiltAngle:           p.tiltAngle,
+                    horizontalAccuracy:  p.horizontalAccuracy,
+                    verticalAccuracy:    p.verticalAccuracy,
+                    isOutlier:           p.isOutlier,
+                    captureType:         p.captureType,
+                    interpolationWeight: p.interpolationWeight
                 )
             }
         }
