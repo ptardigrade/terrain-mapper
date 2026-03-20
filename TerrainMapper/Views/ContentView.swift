@@ -19,7 +19,9 @@ struct ContentView: View {
     @StateObject private var pipeline = ProcessingPipeline()
 
     var body: some View {
-        TabView {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            TabView {
             // ── Survey tab ────────────────────────────────────────────────
             SurveyView(onSessionEnded: { session in
                 processSession(session)
@@ -54,10 +56,11 @@ struct ContentView: View {
                     Label("History", systemImage: "clock.arrow.circlepath")
                 }
         }
-        .environmentObject(pipeline)
-        // Fix tab bar appearance to match dark design language
-        .toolbarBackground(Theme.surfaceContainerLow, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
+            .environmentObject(pipeline)
+            // Fix tab bar appearance to match dark design language
+            .toolbarBackground(Theme.surfaceContainerLow, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
+        }
     }
 
     // MARK: - Session processing

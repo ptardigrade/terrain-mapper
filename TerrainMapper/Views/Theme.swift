@@ -26,12 +26,12 @@ enum Theme {
     static let surfaceContainerHighest  = Color(hex: "353437")
 
     // ── Brand palette ─────────────────────────────────────────────────────
-    /// Primary teal — interactive elements, icons, highlights (#42e5b0)
-    static let primary          = Color(hex: "42e5b0")
-    /// Primary container — button gradient endpoint (#00c896)
-    static let primaryContainer = Color(hex: "00c896")
-    /// Secondary — supporting UI (#adcbda)
-    static let secondary        = Color(hex: "adcbda")
+    /// Primary olive green — interactive elements, icons, highlights (#A9BD89)
+    static let primary          = Color(hex: "A9BD89")
+    /// Primary container — button gradient endpoint (#697D5F)
+    static let primaryContainer = Color(hex: "697D5F")
+    /// Secondary — supporting UI (#777771)
+    static let secondary        = Color(hex: "777771")
     /// Tertiary / warning yellow (#f0c900)
     static let tertiary         = Color(hex: "f0c900")
 

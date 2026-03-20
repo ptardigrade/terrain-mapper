@@ -29,7 +29,7 @@ struct SessionHistoryView: View {
                 historyList
             }
         }
-        .background(Theme.background)
+        .background { Theme.background.ignoresSafeArea() }
         .sheet(item: $selectedTerrain) { terrain in
             ResultsView(terrain: terrain)
                 .environmentObject(settings)
@@ -133,7 +133,7 @@ struct SessionHistoryView: View {
             VStack(spacing: 6) {
                 Button("Resume") { reprocess(session) }
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color(hex: "003828"))
+                    .foregroundStyle(Color(hex: "1E2B14"))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(Theme.primaryGradient, in: RoundedRectangle(cornerRadius: 8))

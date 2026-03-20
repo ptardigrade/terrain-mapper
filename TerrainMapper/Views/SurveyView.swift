@@ -185,7 +185,7 @@ struct SurveyView: View {
                     Button { showNameSheet = true } label: {
                         Text("Start")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color(hex: "003828"))
+                            .foregroundStyle(Color(hex: "1E2B14"))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)
                             .background(Theme.primaryGradient, in: RoundedRectangle(cornerRadius: 10))
@@ -379,7 +379,13 @@ struct SurveyView: View {
     private var gpsTooInaccurate: Bool { engine.gpsAccuracy > 30 }
 
     private var captureButton: some View {
-        Button(action: { Task { await capturePoint() } }) {
+        Button(action: {
+            if !sessionStarted {
+                showNameSheet = true
+            } else {
+                Task { await capturePoint() }
+            }
+        }) {
             ZStack {
                 captureButtonBackground
                 HStack(spacing: 10) {
@@ -410,7 +416,7 @@ struct SurveyView: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .disabled(!sessionStarted || isCapturing || !engine.isSessionActive || gpsTooInaccurate)
+        .disabled(sessionStarted && (isCapturing || !engine.isSessionActive || gpsTooInaccurate))
         .animation(.easeInOut(duration: 0.2), value: isCapturing)
         .animation(.easeInOut(duration: 0.2), value: engine.imuIsStationary)
         .animation(.easeInOut(duration: 0.3), value: gpsTooInaccurate)

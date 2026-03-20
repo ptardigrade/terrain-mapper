@@ -32,7 +32,7 @@ struct SettingsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 40)
         }
-        .background(Theme.background)
+        .background { Theme.background.ignoresSafeArea() }
         .scrollDismissesKeyboard(.interactively)
     }
 
@@ -161,7 +161,7 @@ struct SettingsView: View {
                                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                                     .foregroundStyle(
                                         abs(settings.gridResolution - res) < 0.001
-                                            ? Color(hex: "003828")
+                                            ? Color(hex: "1E2B14")
                                             : Theme.onSurfaceVariant
                                     )
                                     .frame(maxWidth: .infinity)
@@ -208,7 +208,7 @@ struct SettingsView: View {
                 // ── Geoid correction ──────────────────────────────────────
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        settingLabel("EGM96 Geoid Correction")
+                        settingLabel("Geoid Correction")
                         Text("EGM2008 Gravitational Model")
                             .font(.subheadline)
                             .foregroundStyle(Theme.onSurfaceVariant)
