@@ -124,16 +124,16 @@ final class GeoTIFFExporter {
 private extension Data {
     mutating func appendLE<T: FixedWidthInteger>(_ value: T) {
         var v = value.littleEndian
-        withUnsafeBytes(of: &v) { self.append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: &v) { self.append(contentsOf: $0) }
     }
 
     mutating func appendFloat32LE(_ value: Float) {
         var v = value.bitPattern.littleEndian
-        withUnsafeBytes(of: &v) { self.append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: &v) { self.append(contentsOf: $0) }
     }
 
     mutating func appendFloat64LE(_ value: Double) {
         var v = value.bitPattern.littleEndian
-        withUnsafeBytes(of: &v) { self.append(contentsOf: $0) }
+        Swift.withUnsafeBytes(of: &v) { self.append(contentsOf: $0) }
     }
 }

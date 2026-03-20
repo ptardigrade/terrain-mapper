@@ -34,7 +34,7 @@ final class OBJExporter {
             objString += String(format: "vt %.6f 0.0\n", normalizedElevation)
         }
 
-        for (index, triangle) in mesh.triangles.enumerated() {
+        for (_, triangle) in mesh.triangles.enumerated() {
             let v1 = triangle.i0 + 1
             let v2 = triangle.i1 + 1
             let v3 = triangle.i2 + 1
