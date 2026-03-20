@@ -54,6 +54,7 @@ final class ProcessingPipeline: ObservableObject {
     /// - Returns: A `ProcessedTerrain` with all derived products.
     func process(session: SurveySession) async -> ProcessedTerrain {
         isProcessing = true
+        progressMessage = "Starting…"
         let startTime = Date()
 
         // Capture all configuration values on the MainActor before dispatching to
@@ -65,19 +66,23 @@ final class ProcessingPipeline: ObservableObject {
         let capturedInterpolationMethod = interpolationMethod
         let capturedGeoidEnabled        = enableGeoidCorrection
         let capturedMadThreshold        = madThreshold
-        let capturedElevationOffset = elevationOffset
+        let capturedElevationOffset     = elevationOffset
+
+        // ProgressSender lets the background pipeline post stage messages back to
+        // the @MainActor-isolated progressMessage property safely.
+        let sender = ProgressSender(self)
 
         let result = await Task.detached(priority: .userInitiated) {
             ProcessingPipeline.runPipeline(
-                session:              session,
-                startTime:            startTime,
-                contourInterval:      capturedContourInterval,
-                gridResolution:       capturedGridResolution,
-                interpolationMethod:  capturedInterpolationMethod,
+                session:               session,
+                startTime:             startTime,
+                contourInterval:       capturedContourInterval,
+                gridResolution:        capturedGridResolution,
+                interpolationMethod:   capturedInterpolationMethod,
                 enableGeoidCorrection: capturedGeoidEnabled,
-                madThreshold:         capturedMadThreshold,
-                elevationOffset:      capturedElevationOffset,
-                updateProgress:       { _ in }   // progress updates sent separately
+                madThreshold:          capturedMadThreshold,
+                elevationOffset:       capturedElevationOffset,
+                updateProgress:        { msg in sender.send(msg) }
             )
         }.value
 
@@ -115,7 +120,7 @@ final class ProcessingPipeline: ObservableObject {
         let loopClosed = lcProc.applyLoopClosure(to: &points)
 
         // ── 3. PDR position refinement ────────────────────────────────────
-        updateProgress("Refining positions with PDR…")
+        updateProgress("Smoothing survey path…")
         ProcessingPipeline.pdrRefineStatic(points: &points)
 
         // ── 4. Geoid correction ───────────────────────────────────────────
@@ -161,14 +166,14 @@ final class ProcessingPipeline: ObservableObject {
         )
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
-        updateProgress("Triangulating mesh…")
+        updateProgress("Building 3D mesh…")
         let meshGen = MeshGenerator()
         let mesh = validPoints.count >= 3
             ? meshGen.generateMesh(from: validPoints)
             : meshGen.generateMesh(from: grid)
 
         // ── 7. Contour extraction ──────────────────────────────────────────
-        updateProgress("Extracting contours…")
+        updateProgress("Drawing contour lines…")
         let cGen = ContourGenerator()
         let contours = cGen.generateContours(from: grid, interval: contourInterval)
 
@@ -290,4 +295,19 @@ final class ProcessingPipeline: ObservableObject {
         return abs(area) / 2
     }
 
+}
+
+// MARK: - ProgressSender
+
+/// Bridges background-thread stage names to the @MainActor-isolated progressMessage.
+/// Marked @unchecked Sendable because all mutation is safely routed through MainActor.
+private final class ProgressSender: @unchecked Sendable {
+    private weak var pipeline: ProcessingPipeline?
+    init(_ pipeline: ProcessingPipeline) { self.pipeline = pipeline }
+
+    func send(_ message: String) {
+        Task { @MainActor [weak self] in
+            self?.pipeline?.progressMessage = message
+        }
+    }
 }

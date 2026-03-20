@@ -147,9 +147,12 @@ final class SensorFusionEngine: ObservableObject {
 
         s.endTime = Date()
 
-        // Post-processing
-        gpsManager.refineWithPDR(points: &s.points)
-        s.detectOutliers()
+        // Outlier detection and PDR refinement are intentionally deferred to
+        // ProcessingPipeline so the user's configured thresholds (madThreshold,
+        // gridResolution, etc.) are applied.  Running them here would either be
+        // overridden by the pipeline (wasted work) or — in the PDR case — produce
+        // corrections that the pipeline's linear-interpolation pass would silently
+        // overwrite, compounding position errors.
 
         isSessionActive = false
         session = nil

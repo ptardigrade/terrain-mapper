@@ -55,6 +55,10 @@ struct SurveyView: View {
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
 
+    // Brief toast shown after each successful capture
+    @State private var captureToastElevation: Double? = nil
+    @State private var captureToastTask: Task<Void, Never>? = nil
+
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     // MARK: - Body
@@ -82,7 +86,7 @@ struct SurveyView: View {
                     // Passive GPS path-track breadcrumbs — faint teal trail
                     if pathTrackCoordinates.count >= 2 {
                         MapPolyline(coordinates: pathTrackCoordinates)
-                            .stroke(.teal.opacity(0.45), style: StrokeStyle(lineWidth: 1.5))
+                            .stroke(Theme.primary.opacity(0.45), style: StrokeStyle(lineWidth: 1.5))
                     }
                 }
                 .mapStyle(.imagery(elevation: .realistic))
@@ -91,6 +95,22 @@ struct SurveyView: View {
                     MapUserLocationButton()
                 }
                 .ignoresSafeArea(edges: .top)
+                .overlay(alignment: .top) {
+                    if let elev = captureToastElevation {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text(String(format: "Captured  %.2f m", elev))
+                                .font(.subheadline.bold())
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.spring(duration: 0.35), value: captureToastElevation != nil)
 
                 // ── Bottom panel ──────────────────────────────────────────
                 VStack(spacing: 0) {
@@ -163,13 +183,13 @@ struct SurveyView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Depth data could not be read (reflective or sunlit surface). Use the configured stick height (\(String(format: "%.1f", settings.stickHeight)) m) instead?")
+            Text("LiDAR couldn't measure this surface — it may be too reflective or in direct sunlight. Tap 'Use Stick Height' to record the point using your \(String(format: "%.1f", settings.stickHeight)) m stick measurement instead.")
         }
         .alert("Too Few Points", isPresented: $showEndWarning) {
             Button("End Anyway", role: .destructive) { endSession() }
             Button("Keep Surveying", role: .cancel) {}
         } message: {
-            Text("You have \(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s"). At least 6 are recommended for accurate terrain modelling.")
+            Text("Only \(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s") captured so far. At least 6 are recommended — fewer points make the terrain model less reliable. You can keep surveying to improve accuracy.")
         }
         .sheet(isPresented: $showNameSheet) {
             NavigationStack {
@@ -273,10 +293,14 @@ struct SurveyView: View {
     private var captureButton: some View {
         Button(action: { Task { await capturePoint() } }) {
             ZStack {
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(captureButtonColor)
+                captureButtonBackground
                 HStack(spacing: 10) {
-                    if isCapturing {
+                    if !sessionStarted {
+                        Image(systemName: "play.circle.fill")
+                            .font(.title3).foregroundStyle(.white)
+                        Text("Tap Start to begin")
+                            .font(.headline).foregroundStyle(.white)
+                    } else if isCapturing {
                         VStack(spacing: 6) {
                             Text("Sampling LiDAR…")
                                 .font(.headline).foregroundStyle(.white)
@@ -311,11 +335,36 @@ struct SurveyView: View {
         .animation(.easeInOut(duration: 0.3), value: gpsTooInaccurate)
     }
 
-    private var captureButtonColor: Color {
-        if isCapturing             { return .blue }
-        if gpsTooInaccurate        { return .red.opacity(0.8) }
-        if !engine.imuIsStationary { return .orange }
-        return .blue
+    /// Shape style for the capture button background — gradient when ready,
+    /// flat semantic colour otherwise.
+    @ViewBuilder
+    private var captureButtonBackground: some View {
+        if !sessionStarted {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.secondary.opacity(0.25))
+        } else if isCapturing {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Theme.primary.opacity(0.75))
+        } else if gpsTooInaccurate {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.red.opacity(0.8))
+        } else if !engine.imuIsStationary {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.orange)
+        } else {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Theme.primaryGradient)
+        }
+    }
+
+    private func showCaptureToast(elevation: Double) {
+        captureToastTask?.cancel()
+        captureToastElevation = elevation
+        captureToastTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            captureToastElevation = nil
+        }
     }
 
     // MARK: - Session footer
@@ -416,6 +465,9 @@ struct SurveyView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             capturedPoints.append(point)
 
+            // Show brief elevation toast then auto-dismiss
+            showCaptureToast(elevation: point.groundElevation)
+
             // Persist incrementally after every successful capture
             if let snapshot = engine.currentSessionSnapshot {
                 sessionStore.save(session: snapshot)
@@ -481,6 +533,7 @@ struct SurveyView: View {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         engine.appendPoint(point)
         capturedPoints.append(point)
+        showCaptureToast(elevation: point.groundElevation)
         // Persist after stick-height fallback capture
         if let snapshot = engine.currentSessionSnapshot {
             sessionStore.save(session: snapshot)
