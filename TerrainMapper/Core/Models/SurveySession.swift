@@ -28,6 +28,10 @@ struct SurveySession: Identifiable, Codable {
     /// The operator enters this before starting a session.
     var stickHeight: Double
 
+    /// Optional user-provided name for this session (displayed in history).
+    /// Auto-generated from start time if not set.
+    var name: String
+
     /// EGM96 geoid undulation (metres) at the session centroid.
     /// Positive value means WGS-84 ellipsoid is above geoid (most land areas).
     /// Populated after the first GPS fix by looking up the local EGM96 table.
@@ -35,12 +39,13 @@ struct SurveySession: Identifiable, Codable {
 
     // MARK: - Initialisers
 
-    init(stickHeight: Double = 2.0, geoidOffset: Double = 0.0) {
+    init(stickHeight: Double = 2.0, geoidOffset: Double = 0.0, name: String = "") {
         self.id          = UUID()
         self.startTime   = Date()
         self.endTime     = nil
         self.points      = []
         self.stickHeight = stickHeight
+        self.name        = name
         self.geoidOffset = geoidOffset
     }
 }

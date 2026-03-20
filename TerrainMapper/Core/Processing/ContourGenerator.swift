@@ -42,8 +42,8 @@ struct ContourGenerator {
     ///   - interval: Elevation spacing between contours (metres, default 0.5).
     /// - Returns: Array of `ContourLine`, one per iso-level per connected polyline.
     func generateContours(from grid: TerrainGrid, interval: Double = 0.5) -> [ContourLine] {
-        guard grid.height > 1, grid.width > 1,
-              let validElevs = optionalLet(grid.validElevations) else { return [] }
+        guard grid.height > 1, grid.width > 1 else { return [] }
+        let validElevs = grid.validElevations
         guard !validElevs.isEmpty else { return [] }
 
         let minElev = validElevs.min()!
@@ -181,15 +181,14 @@ struct ContourGenerator {
         var contours: [ContourLine] = []
 
         for startIdx in 0..<segs.count where !used[startIdx] {
-            var chain: [(Double, Double)] = []
-            var current = startIdx
-            var fromEnd = false   // which end of current segment we're growing from
+            used[startIdx] = true
 
-            // Walk forward
-            used[current] = true
-            chain.append((segs[current].x0, segs[current].y0))
-            chain.append((segs[current].x1, segs[current].y1))
-            var tip = (segs[current].x1, segs[current].y1)
+            // ── Grow forward from the x1 end of the starting segment ──────
+            var chainForward: [(Double, Double)] = [
+                (segs[startIdx].x0, segs[startIdx].y0),
+                (segs[startIdx].x1, segs[startIdx].y1)
+            ]
+            var tip = (segs[startIdx].x1, segs[startIdx].y1)
 
             var growing = true
             while growing {
@@ -199,18 +198,47 @@ struct ContourGenerator {
                 for nextIdx in candidates where !used[nextIdx] {
                     let s = segs[nextIdx]
                     used[nextIdx] = true
-                    let startMatch = abs(s.x0 - tip.0) < 0.002 && abs(s.y0 - tip.1) < 0.002
-                    if startMatch {
-                        chain.append((s.x1, s.y1))
+                    if abs(s.x0 - tip.0) < 0.002 && abs(s.y0 - tip.1) < 0.002 {
+                        chainForward.append((s.x1, s.y1))
                         tip = (s.x1, s.y1)
                     } else {
-                        chain.append((s.x0, s.y0))
+                        chainForward.append((s.x0, s.y0))
                         tip = (s.x0, s.y0)
                     }
                     growing = true
                     break
                 }
             }
+
+            // ── Grow backward from the x0 end of the starting segment ─────
+            // Segments are undirected, so the same adjacency lookup applies.
+            // We collect the extension points in a separate array, then reverse-
+            // prepend them so the final chain is spatially continuous.
+            var chainBackward: [(Double, Double)] = []
+            var tail = (segs[startIdx].x0, segs[startIdx].y0)
+
+            growing = true
+            while growing {
+                growing = false
+                let key = quantize(tail.0, tail.1)
+                guard let candidates = adjacency[key] else { break }
+                for nextIdx in candidates where !used[nextIdx] {
+                    let s = segs[nextIdx]
+                    used[nextIdx] = true
+                    if abs(s.x0 - tail.0) < 0.002 && abs(s.y0 - tail.1) < 0.002 {
+                        chainBackward.append((s.x1, s.y1))
+                        tail = (s.x1, s.y1)
+                    } else {
+                        chainBackward.append((s.x0, s.y0))
+                        tail = (s.x0, s.y0)
+                    }
+                    growing = true
+                    break
+                }
+            }
+
+            // Full chain: backward extension (reversed) + forward extension
+            let chain = chainBackward.reversed() + chainForward
 
             guard chain.count >= minPointsPerContour else { continue }
 
@@ -228,9 +256,4 @@ struct ContourGenerator {
         return contours
     }
 
-    // MARK: - Helper
-
-    private func optionalLet(_ arr: [Double]) -> [Double]? {
-        arr.isEmpty ? nil : arr
-    }
 }

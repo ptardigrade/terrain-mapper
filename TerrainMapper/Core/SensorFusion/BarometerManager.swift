@@ -66,9 +66,7 @@ final class BarometerManager: ObservableObject {
 
         altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, error in
             guard let self, let data, error == nil else { return }
-            Task { @MainActor in
-                self.handleAltimeterData(data)
-            }
+            self.handleAltimeterData(data)
         }
     }
 

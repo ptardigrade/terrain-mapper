@@ -37,6 +37,9 @@ struct TiltMeterView: View {
     /// True when IMU stationary gate is satisfied.
     var isStationary: Bool
 
+    /// Stationary progress from 0.0 to 1.0.
+    var stationaryProgress: Double = 0.0
+
     // MARK: - Constants
 
     private let outerRadius: CGFloat = 50
@@ -48,6 +51,17 @@ struct TiltMeterView: View {
 
     var body: some View {
         ZStack {
+            // ── Stationary progress arc ───────────────────────────────────
+            Circle()
+                .trim(from: 0, to: CGFloat(stationaryProgress))
+                .stroke(
+                    Color.green.opacity(stationaryProgress > 0.95 ? 0.9 : 0.5),
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                )
+                .frame(width: outerRadius * 2, height: outerRadius * 2)
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.1), value: stationaryProgress)
+
             // ── Outer ring ────────────────────────────────────────────────
             Circle()
                 .strokeBorder(ringColor, lineWidth: 2)
@@ -121,9 +135,9 @@ struct TiltMeterView: View {
 
 #Preview {
     HStack(spacing: 40) {
-        TiltMeterView(tiltAngle: 0.01, gravityX: 0.01, gravityY: 0.01, isStationary: true)
-        TiltMeterView(tiltAngle: 0.08, gravityX: 0.05, gravityY: 0.06, isStationary: false)
-        TiltMeterView(tiltAngle: 0.20, gravityX: 0.15, gravityY: 0.14, isStationary: false)
+        TiltMeterView(tiltAngle: 0.01, gravityX: 0.01, gravityY: 0.01, isStationary: true, stationaryProgress: 1.0)
+        TiltMeterView(tiltAngle: 0.08, gravityX: 0.05, gravityY: 0.06, isStationary: false, stationaryProgress: 0.5)
+        TiltMeterView(tiltAngle: 0.20, gravityX: 0.15, gravityY: 0.14, isStationary: false, stationaryProgress: 0.1)
     }
     .padding()
 }

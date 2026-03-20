@@ -48,6 +48,9 @@
 		/* New frameworks */
 		EE0000020000000000000001 /* SceneKit.framework in Frameworks */      = {isa = PBXBuildFile; fileRef = EE0000010000000000000001; };
 		EE0000020000000000000002 /* MapKit.framework in Frameworks */        = {isa = PBXBuildFile; fileRef = EE0000010000000000000002; };
+		/* Phase 5: Persistence + History */
+		FF000002000000000000001A /* SessionStore.swift in Sources */         = {isa = PBXBuildFile; fileRef = FF000002000000000000001B; };
+		FF000002000000000000002A /* SessionHistoryView.swift in Sources */   = {isa = PBXBuildFile; fileRef = FF000002000000000000002B; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -94,6 +97,9 @@
 		/* New frameworks */
 		EE0000010000000000000001 /* SceneKit.framework */          = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = System/Library/Frameworks/SceneKit.framework; sourceTree = SDKROOT; };
 		EE0000010000000000000002 /* MapKit.framework */            = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = System/Library/Frameworks/MapKit.framework; sourceTree = SDKROOT; };
+		/* Phase 5: Persistence + History */
+		FF000002000000000000001B /* SessionStore.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		FF000002000000000000002B /* SessionHistoryView.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -142,8 +148,18 @@
 				AA000001000000000000027A /* Models */,
 				FF000001000000000000001A /* Processing */,
 				FF000001000000000000002A /* Export */,
+				FF000002000000000000003A /* Persistence */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		/* Persistence group */
+		FF000002000000000000003A /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				FF000002000000000000001B /* SessionStore.swift */,
+			);
+			path = Persistence;
 			sourceTree = "<group>";
 		};
 		/* SensorFusion group */
@@ -211,6 +227,7 @@
 				CC0000010000000000000003 /* SurveyView.swift */,
 				CC0000010000000000000004 /* ResultsView.swift */,
 				CC0000010000000000000005 /* SettingsView.swift */,
+				FF000002000000000000002B /* SessionHistoryView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -333,6 +350,9 @@
 				DD0000020000000000000005 /* OBJExporter.swift in Sources */,
 				DD0000020000000000000006 /* CSVExporter.swift in Sources */,
 				DD0000020000000000000007 /* ExportManager.swift in Sources */,
+				/* Phase 5 */
+				FF000002000000000000001A /* SessionStore.swift in Sources */,
+				FF000002000000000000002A /* SessionHistoryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

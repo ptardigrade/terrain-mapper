@@ -68,6 +68,10 @@ struct TerrainInterpolator {
         method: InterpolationMethod = .idw
     ) -> TerrainGrid {
         let res = resolution ?? gridResolutionMeters
+        // Guard against zero/negative resolution which would cause division-by-zero below.
+        guard res > 0 else {
+            return emptyGrid(resolution: 0.5)
+        }
         guard !points.isEmpty else {
             return emptyGrid(resolution: res)
         }
@@ -126,7 +130,9 @@ struct TerrainInterpolator {
                 case .idw:
                     elevations[row][col] = idwEstimate(neighbours: neighbours, power: power)
                 case .kriging:
-                    let knn = Array(neighbours.prefix(maxKrigingNeighbours))
+                    let knnFull = nearestPointsWithCoordinates(localPts, to: (qx, qy),
+                                                               maxRadius: maxSearchRadiusMeters)
+                    let knn = Array(knnFull.prefix(maxKrigingNeighbours))
                     elevations[row][col] = krigingEstimate(neighbours: knn, vario: vario)
                 }
             }
@@ -284,7 +290,7 @@ struct TerrainInterpolator {
     }
 
     /// Nearest-neighbours variant that also returns (x, y) for kriging.
-    private func nearestPoints(
+    private func nearestPointsWithCoordinates(
         _ pts: [(x: Double, y: Double, z: Double)],
         to query: (Double, Double),
         maxRadius: Double

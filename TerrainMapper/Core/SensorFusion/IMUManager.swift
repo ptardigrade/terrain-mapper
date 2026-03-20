@@ -38,9 +38,18 @@ final class IMUManager: ObservableObject {
     /// True when the device has been stationary for at least `kWindowSize` samples.
     @Published private(set) var isStationary: Bool = false
 
+    /// Stationary progress from 0.0 to 1.0; tracks how close the device is to being stationary.
+    @Published private(set) var stationaryProgress: Double = 0.0
+
     /// Convenience multiplier: cos(tiltAngle).
     /// Multiply a LiDAR slant distance by this to get the vertical component.
     var tiltCorrectionFactor: Double { cos(tiltAngle) }
+
+    /// Gravity vector X component in device frame (used by TiltMeterView bubble).
+    @Published private(set) var gravityX: Double = 0.0
+
+    /// Gravity vector Y component in device frame (used by TiltMeterView bubble).
+    @Published private(set) var gravityY: Double = 0.0
 
     // MARK: - Private
 
@@ -63,10 +72,9 @@ final class IMUManager: ObservableObject {
             using: .xArbitraryZVertical,
             to: .main
         ) { [weak self] motion, error in
+            // Callback already delivered on .main — direct call, no Task wrapper needed.
             guard let self, let motion, error == nil else { return }
-            Task { @MainActor in
-                self.processMotion(motion)
-            }
+            self.processMotion(motion)
         }
     }
 
@@ -89,6 +97,10 @@ final class IMUManager: ObservableObject {
         let cosTheta = max(-1.0, min(1.0, abs(g.z)))
         tiltAngle = acos(cosTheta)
 
+        // Expose gravity X/Y for the spirit-level bubble in TiltMeterView.
+        gravityX = g.x
+        gravityY = g.y
+
         // ── Stationary gate ──────────────────────────────────────────────
         // userAcceleration removes gravity; magnitude should be ~0 when still.
         let ua = motion.userAcceleration
@@ -99,11 +111,13 @@ final class IMUManager: ObservableObject {
             accelerationWindow.removeFirst()
         }
 
-        if accelerationWindow.count == kWindowSize {
+        if accelerationWindow.count < kWindowSize {
+            stationaryProgress = Double(accelerationWindow.count) / Double(kWindowSize) * 0.5
+            isStationary = false
+        } else {
             let variance = accelerationWindow.variance()
             isStationary = variance < kVarianceGate
-        } else {
-            isStationary = false
+            stationaryProgress = max(0.0, min(1.0, 1.0 - (variance / kVarianceGate)))
         }
     }
 }

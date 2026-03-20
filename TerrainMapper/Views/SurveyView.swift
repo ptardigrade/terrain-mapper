@@ -22,7 +22,6 @@
 
 import SwiftUI
 import MapKit
-import CoreMotion
 import CoreLocation
 
 struct SurveyView: View {
@@ -33,8 +32,9 @@ struct SurveyView: View {
 
     // MARK: - Dependencies
 
-    @EnvironmentObject private var engine:   SensorFusionEngine
-    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var engine:       SensorFusionEngine
+    @EnvironmentObject private var settings:     AppSettings
+    @EnvironmentObject private var sessionStore: SessionStore
 
     // MARK: - State
 
@@ -45,16 +45,16 @@ struct SurveyView: View {
     @State private var showError:        Bool = false
     @State private var elapsedSeconds:   Int = 0
     @State private var sessionStarted:   Bool = false
-    @State private var captureCountdown: Int = 0   // LiDAR frames remaining
-    @State private var gravityX:         Double = 0
-    @State private var gravityY:         Double = 0
+    @State private var showLiDARFallbackAlert: Bool = false
+    @State private var showEndWarning: Bool = false
+    @State private var sessionName:      String = ""
+    @State private var showNameSheet:    Bool   = false
 
     // Elevation range for colour mapping (updated as points arrive)
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    private let motionManager = CMMotionManager()
 
     // MARK: - Body
 
@@ -72,6 +72,11 @@ struct SurveyView: View {
                                 isOutlier: point.isOutlier
                             )
                         }
+                    }
+                    // Survey path polyline
+                    if capturedPoints.count >= 2 {
+                        MapPolyline(coordinates: capturedPoints.map(\.clCoordinate))
+                            .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [4, 4]))
                     }
                 }
                 .mapStyle(.imagery(elevation: .realistic))
@@ -101,14 +106,37 @@ struct SurveyView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if !sessionStarted {
-                        Button("Start") { startSession() }
+                        Button("Start") { showNameSheet = true }
                             .buttonStyle(.borderedProminent)
                             .tint(.green)
                     }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    if sessionStarted && !capturedPoints.isEmpty {
+                        Button {
+                            if let removed = engine.undoLastPoint() {
+                                capturedPoints.removeAll { $0.id == removed.id }
+                                let all = capturedPoints.map(\.groundElevation)
+                                elevMin = all.min() ?? 0
+                                elevMax = max(elevMin + 0.01, all.max() ?? 1)
+                            }
+                        } label: {
+                            Label("Undo", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if capturedPoints.count >= 2 {
+                        Button {
+                            fitMapToPoints()
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     if sessionStarted {
-                        Button("End Survey") { endSession() }
+                        Button("End Survey") { checkEndSession() }
                             .foregroundStyle(.red)
                     }
                 }
@@ -117,12 +145,53 @@ struct SurveyView: View {
         .onReceive(timer) { _ in
             if sessionStarted { elapsedSeconds += 1 }
         }
-        .onAppear { startGravityUpdates() }
-        .onDisappear { motionManager.stopDeviceMotionUpdates() }
-        .onChange(of: engine.imuIsStationary) { _, _ in }
         .alert("Capture Error", isPresented: $showError, presenting: captureError) { _ in
             Button("OK", role: .cancel) {}
         } message: { msg in Text(msg) }
+        .alert("LiDAR Unavailable", isPresented: $showLiDARFallbackAlert) {
+            Button("Use Stick Height") {
+                Task { await captureWithStickHeight() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Depth data could not be read (reflective or sunlit surface). Use the configured stick height (\(String(format: "%.1f", settings.stickHeight)) m) instead?")
+        }
+        .alert("Too Few Points", isPresented: $showEndWarning) {
+            Button("End Anyway", role: .destructive) { endSession() }
+            Button("Keep Surveying", role: .cancel) {}
+        } message: {
+            Text("You have \(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s"). At least 6 are recommended for accurate terrain modelling.")
+        }
+        .sheet(isPresented: $showNameSheet) {
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField("e.g. Front paddock, North fence line…", text: $sessionName)
+                            .autocorrectionDisabled(false)
+                    } header: {
+                        Text("Session Name (optional)")
+                    } footer: {
+                        Text("Leave blank to auto-name by date and time.")
+                    }
+                }
+                .navigationTitle("New Survey Session")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Cancel") { showNameSheet = false }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Start") {
+                            showNameSheet = false
+                            startSession()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
     }
 
     // MARK: - Sensor status row
@@ -132,9 +201,10 @@ struct SurveyView: View {
             // Spirit level
             TiltMeterView(
                 tiltAngle: engine.tiltAngleDegrees * .pi / 180,
-                gravityX:  gravityX,
-                gravityY:  gravityY,
-                isStationary: engine.imuIsStationary
+                gravityX:  engine.gravityX,
+                gravityY:  engine.gravityY,
+                isStationary: engine.imuIsStationary,
+                stationaryProgress: engine.stationaryProgress
             )
             .frame(width: 80)
 
@@ -169,7 +239,7 @@ struct SurveyView: View {
             Divider().frame(height: 60)
 
             // Altitude
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 Image(systemName: "arrow.up.and.down")
                     .foregroundStyle(.blue)
                 Text("ALT")
@@ -177,6 +247,9 @@ struct SurveyView: View {
                 Text(String(format: "%.1f m", engine.currentAltitude))
                     .font(.system(.caption, design: .monospaced, weight: .semibold))
                     .foregroundStyle(.blue)
+                Text(String(format: "±%.1f", engine.altitudeUncertainty))
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(.blue.opacity(0.7))
             }
             .frame(maxWidth: .infinity)
         }
@@ -185,6 +258,9 @@ struct SurveyView: View {
 
     // MARK: - Capture button
 
+    /// True when GPS accuracy is too poor to record a reliable position (>30 m).
+    private var gpsTooInaccurate: Bool { engine.gpsAccuracy > 30 }
+
     private var captureButton: some View {
         Button(action: { Task { await capturePoint() } }) {
             ZStack {
@@ -192,8 +268,18 @@ struct SurveyView: View {
                     .fill(captureButtonColor)
                 HStack(spacing: 10) {
                     if isCapturing {
-                        ProgressView().progressViewStyle(.circular).tint(.white)
-                        Text("Sampling LiDAR…")
+                        VStack(spacing: 6) {
+                            Text("Sampling LiDAR…")
+                                .font(.headline).foregroundStyle(.white)
+                            ProgressView(value: engine.lidarCaptureProgress)
+                                .progressViewStyle(.linear)
+                                .tint(.white)
+                                .frame(maxWidth: 200)
+                        }
+                    } else if gpsTooInaccurate {
+                        Image(systemName: "location.slash.fill")
+                            .foregroundStyle(.white)
+                        Text("Weak GPS — Move to open sky")
                             .font(.headline).foregroundStyle(.white)
                     } else if !engine.imuIsStationary {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -210,14 +296,16 @@ struct SurveyView: View {
                 .padding(.vertical, 14)
             }
         }
-        .disabled(!sessionStarted || isCapturing || !engine.isSessionActive)
+        .disabled(!sessionStarted || isCapturing || !engine.isSessionActive || gpsTooInaccurate)
         .animation(.easeInOut(duration: 0.2), value: isCapturing)
         .animation(.easeInOut(duration: 0.2), value: engine.imuIsStationary)
+        .animation(.easeInOut(duration: 0.3), value: gpsTooInaccurate)
     }
 
     private var captureButtonColor: Color {
-        if isCapturing                { return .blue }
-        if !engine.imuIsStationary    { return .orange }
+        if isCapturing             { return .blue }
+        if gpsTooInaccurate        { return .red.opacity(0.8) }
+        if !engine.imuIsStationary { return .orange }
         return .blue
     }
 
@@ -228,11 +316,24 @@ struct SurveyView: View {
             Label("\(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s")",
                   systemImage: "mappin")
                 .font(.caption).foregroundStyle(.secondary)
+
+            // Live elevation range — appears once we have ≥ 2 points
+            if capturedPoints.count >= 2 {
+                Spacer()
+                Text(liveElevationRange)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
             Label(formattedElapsed, systemImage: "clock")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var liveElevationRange: String {
+        String(format: "↕ %.1f–%.1f m", elevMin, elevMax)
     }
 
     private var formattedElapsed: String {
@@ -245,8 +346,8 @@ struct SurveyView: View {
 
     private var gpsColor: Color {
         let acc = engine.gpsAccuracy
-        if acc <= 5  { return .green }
-        if acc <= 15 { return .yellow }
+        if acc <= 8  { return .green }
+        if acc <= 20 { return .yellow }
         return .red
     }
 
@@ -256,14 +357,41 @@ struct SurveyView: View {
         capturedPoints = []
         elapsedSeconds = 0
         elevMin = 0; elevMax = 1
-        engine.startSession(stickHeight: settings.stickHeight)
+        engine.startSession(stickHeight: settings.stickHeight, name: sessionName)
         sessionStarted = true
     }
 
     private func endSession() {
         let session = engine.endSession()
         sessionStarted = false
+        sessionStore.archive(session: session)
         onSessionEnded(session)
+    }
+
+    private func checkEndSession() {
+        if capturedPoints.count < 6 {
+            showEndWarning = true
+        } else {
+            endSession()
+        }
+    }
+
+    private func fitMapToPoints() {
+        guard !capturedPoints.isEmpty else { return }
+        let lats = capturedPoints.map(\.latitude)
+        let lons = capturedPoints.map(\.longitude)
+        let minLat = lats.min()!, maxLat = lats.max()!
+        let minLon = lons.min()!, maxLon = lons.max()!
+        let centerLat = (minLat + maxLat) / 2
+        let centerLon = (minLon + maxLon) / 2
+        let spanLat = max(0.001, (maxLat - minLat) * 1.5)
+        let spanLon = max(0.001, (maxLon - minLon) * 1.5)
+        withAnimation {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
+                span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+            ))
+        }
     }
 
     private func capturePoint() async {
@@ -271,9 +399,17 @@ struct SurveyView: View {
         isCapturing = true
         defer { isCapturing = false }
 
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
         do {
             let point = try await engine.capturePoint()
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             capturedPoints.append(point)
+
+            // Persist incrementally after every successful capture
+            if let snapshot = engine.currentSessionSnapshot {
+                sessionStore.save(session: snapshot)
+            }
 
             // Update elevation range
             let all = capturedPoints.map(\.groundElevation)
@@ -289,23 +425,65 @@ struct SurveyView: View {
                     latitudinalMeters: 100, longitudinalMeters: 100
                 ))
             }
+        } catch SensorFusionError.lidarCaptureFailed(let inner) {
+            if case LiDARError.depthDataUnavailable = inner {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                showLiDARFallbackAlert = true
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            captureError = SensorFusionError.lidarCaptureFailed(inner).localizedDescription
+            showError = true
         } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
             captureError = error.localizedDescription
             showError    = true
         }
     }
 
-    // MARK: - IMU gravity for TiltMeterView
-
-    private func startGravityUpdates() {
-        guard motionManager.isDeviceMotionAvailable else { return }
-        motionManager.deviceMotionUpdateInterval = 1.0 / 30.0
-        motionManager.startDeviceMotionUpdates(to: .main) { motion, _ in
-            guard let m = motion else { return }
-            gravityX = m.gravity.x
-            gravityY = m.gravity.y
+    private func captureWithStickHeight() async {
+        guard !isCapturing else { return }
+        isCapturing = true
+        defer { isCapturing = false }
+        // Build a point using GPS + stick height instead of LiDAR
+        guard let location = engine.gpsManager.currentLocation else {
+            captureError = "No GPS location available."
+            showError = true
+            return
+        }
+        let fusedAlt = engine.currentAltitude
+        let groundElev = fusedAlt - settings.stickHeight
+        let point = SurveyPoint(
+            id: UUID(), timestamp: Date(),
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude,
+            fusedAltitude: fusedAlt,
+            groundElevation: groundElev,
+            lidarDistance: settings.stickHeight,
+            gpsAltitude: location.altitude,
+            baroAltitudeDelta: engine.barometerManager.currentRelativeAltitude,
+            tiltAngle: engine.imuManager.tiltAngle,
+            horizontalAccuracy: location.horizontalAccuracy,
+            verticalAccuracy: max(location.verticalAccuracy, 0)
+        )
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        engine.appendPoint(point)
+        capturedPoints.append(point)
+        // Persist after stick-height fallback capture
+        if let snapshot = engine.currentSessionSnapshot {
+            sessionStore.save(session: snapshot)
+        }
+        let all = capturedPoints.map(\.groundElevation)
+        elevMin = all.min() ?? 0
+        elevMax = max(elevMin + 0.01, all.max() ?? 1)
+        let coord = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+        withAnimation {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: coord, latitudinalMeters: 100, longitudinalMeters: 100
+            ))
         }
     }
+
 }
 
 // MARK: - Supporting views

@@ -12,12 +12,18 @@
 import SwiftUI
 import MapKit
 import SceneKit
+import UIKit
 
 struct ResultsView: View {
     let terrain: ProcessedTerrain
 
     @State private var selectedTab: ResultsTab = .map
+    @State private var showExportError: Bool = false
+    @State private var exportErrorMessage: String = ""
+    @State private var showShareSheet: Bool = false
+    @State private var shareURLs:      [URL] = []
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var exportManager: ExportManager
 
     enum ResultsTab: String, CaseIterable, Identifiable {
         case map      = "Map"
@@ -63,11 +69,45 @@ struct ResultsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(items: []) {
-                        Image(systemName: "square.and.arrow.up")
+                    Button {
+                        Task { await runExport() }
+                    } label: {
+                        if exportManager.isExporting {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                        }
                     }
+                    .disabled(exportManager.isExporting || settings.selectedExportFormats.isEmpty)
                 }
             }
+            .alert("Export Failed", isPresented: $showExportError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(exportErrorMessage)
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ActivityShareSheet(urls: shareURLs)
+                    .presentationDetents([.medium, .large])
+            }
+        }
+    }
+
+    // MARK: - Export
+
+    private func runExport() async {
+        do {
+            let urls = try await exportManager.export(
+                terrain: terrain,
+                formats: settings.selectedExportFormats
+            )
+            shareURLs      = urls
+            showShareSheet = true
+        } catch {
+            exportErrorMessage = error.localizedDescription
+            showExportError = true
         }
     }
 
@@ -154,7 +194,10 @@ struct ResultsView: View {
                 let elevMin = sortedContours.first?.elevation ?? 0
                 let elevMax = sortedContours.last?.elevation ?? 1
                 let span    = max(1, elevMax - elevMin)
-                let interval = terrain.contours.dropFirst().first.map { abs($0.elevation - sortedContours[0].elevation) } ?? 0.5
+                // Use the sorted array to compute the actual contour interval.
+                let interval: Double = sortedContours.count >= 2
+                    ? abs(sortedContours[1].elevation - sortedContours[0].elevation)
+                    : 0.5
 
                 for contour in sortedContours {
                     guard contour.coordinates.count >= 2 else { continue }
@@ -206,7 +249,7 @@ struct ResultsView: View {
                          sub: String(format: "%.1f – %.1f m", terrain.stats.elevationMin, terrain.stats.elevationMax))
                 StatCard(icon: "scope", label: "RMS Accuracy",
                          value: String(format: "±%.2f m", terrain.stats.rmsAccuracyEstimate),
-                         sub: "vertical")
+                         sub: accuracyTier(terrain.stats.rmsAccuracyEstimate))
                 StatCard(icon: "triangle", label: "Mesh Triangles",
                          value: "\(terrain.mesh.triangleCount)",
                          sub: "\(terrain.mesh.vertexCount) vertices")
@@ -228,6 +271,15 @@ struct ResultsView: View {
     private func formatArea(_ m2: Double) -> String {
         if m2 >= 10_000 { return String(format: "%.3f ha", m2 / 10_000) }
         return String(format: "%.0f m²", m2)
+    }
+
+    private func accuracyTier(_ rms: Double) -> String {
+        switch rms {
+        case ..<0.05: return "Survey-grade ✓"
+        case ..<0.15: return "RTK-grade ✓"
+        case ..<0.50: return "GPS-grade"
+        default:      return "Low accuracy — check tilt"
+        }
     }
 }
 
@@ -302,7 +354,12 @@ struct TerrainSceneView: UIViewRepresentable {
 
         guard mesh.vertexCount >= 3 else { return scene }
 
+        // Horizontal extent: maximum coordinate distance from origin across all vertices.
+        let horizontalExtent = mesh.vertices.map { max(abs($0.x), abs($0.y)) }.max() ?? 1.0
+        // Camera distance should be large enough to see the whole mesh regardless of
+        // elevation range (important for flat surveys where elevRange ≈ 0).
         let elevRange = max(1, mesh.elevationMax - mesh.elevationMin)
+        let camDist   = max(elevRange * 3, horizontalExtent * 2)
 
         // Build SCNGeometry from TerrainMesh
         var positions: [SCNVector3] = []
@@ -355,7 +412,7 @@ struct TerrainSceneView: UIViewRepresentable {
         cam.fieldOfView = 60
         let camNode = SCNNode()
         camNode.camera = cam
-        camNode.position = SCNVector3(0, Float(elevRange * 3), Float(elevRange * 2))
+        camNode.position = SCNVector3(0, Float(camDist), Float(camDist * 0.6))
         camNode.look(at: SCNVector3(0, 0, 0))
         scene.rootNode.addChildNode(camNode)
 
@@ -390,4 +447,17 @@ private extension Array {
     var middle: Element? {
         isEmpty ? nil : self[count / 2]
     }
+}
+
+// MARK: - ActivityShareSheet
+
+/// UIActivityViewController wrapper for sharing exported files.
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let urls: [URL]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: urls, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiView: UIActivityViewController, context: Context) {}
 }

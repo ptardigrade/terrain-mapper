@@ -11,6 +11,7 @@ struct TerrainMapperApp: App {
     @StateObject private var engine        = SensorFusionEngine()
     @StateObject private var settings      = AppSettings()
     @StateObject private var exportManager = ExportManager()
+    @StateObject private var sessionStore  = SessionStore()
 
     var body: some Scene {
         WindowGroup {
@@ -18,6 +19,7 @@ struct TerrainMapperApp: App {
                 .environmentObject(engine)
                 .environmentObject(settings)
                 .environmentObject(exportManager)
+                .environmentObject(sessionStore)
         }
     }
 }

@@ -89,6 +89,29 @@ struct SettingsView: View {
                     }
                 }
 
+                // ── Elevation calibration ─────────────────────────────────────────
+                Section {
+                    Toggle(isOn: $settings.elevationOffsetEnabled) {
+                        Label("Apply Elevation Offset", systemImage: "arrow.up.and.down.circle")
+                    }
+                    if settings.elevationOffsetEnabled {
+                        HStack {
+                            Label("Offset", systemImage: "plusminus")
+                            Spacer()
+                            TextField("0.000", value: $settings.elevationOffset,
+                                      format: .number.precision(.fractionLength(3)))
+                                .keyboardType(.numbersAndPunctuation)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 90)
+                            Text("m").foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Elevation Calibration")
+                } footer: {
+                    Text("Add a fixed vertical offset to all ground elevations during processing. Use when a known benchmark point reveals a GPS altitude bias (e.g., enter −1.5 if elevations read 1.5 m too high).")
+                }
+
                 // ── Export ────────────────────────────────────────────────
                 Section {
                     ForEach(ExportFormat.allCases) { format in

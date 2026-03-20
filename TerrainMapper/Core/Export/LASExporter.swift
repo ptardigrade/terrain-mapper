@@ -122,8 +122,11 @@ final class LASExporter {
 
         data.appendLE(pointCount)
 
-        for _ in 0..<5 {
-            data.appendLE(pointCount == 0 ? UInt32(0) : (pointCount > 0 ? pointCount : UInt32(0)))
+        // Legacy return counts (5 entries): index 0 = all points (single return),
+        // indices 1–4 = zero (no multi-return data from a handheld survey device).
+        data.appendLE(pointCount)   // return count 1
+        for _ in 0..<4 {
+            data.appendLE(UInt32(0))   // return counts 2–5
         }
 
         data.appendFloat64LE(xScale)
@@ -134,12 +137,12 @@ final class LASExporter {
         data.appendFloat64LE(yOffset)
         data.appendFloat64LE(zOffset)
 
+        // LAS 1.4 spec order: Max X, Min X, Max Y, Min Y, Max Z, Min Z
         data.appendFloat64LE(maxX)
-        data.appendFloat64LE(maxY)
-        data.appendFloat64LE(maxZ)
-
         data.appendFloat64LE(minX)
+        data.appendFloat64LE(maxY)
         data.appendFloat64LE(minY)
+        data.appendFloat64LE(maxZ)
         data.appendFloat64LE(minZ)
 
         data.appendLE(UInt64(0))
@@ -148,8 +151,11 @@ final class LASExporter {
         data.appendLE(UInt32(0))
         data.appendLE(pointCountExtended)
 
-        for _ in 0..<15 {
-            data.appendLE(UInt64(pointCountExtended > 0 ? pointCountExtended : 0))
+        // Extended return counts (15 entries): index 0 = all points (single return),
+        // indices 1–14 = zero (no multi-return data from a handheld survey device).
+        data.appendLE(pointCountExtended)   // return count 1
+        for _ in 0..<14 {
+            data.appendLE(UInt64(0))   // return counts 2–15
         }
     }
 
@@ -179,7 +185,7 @@ final class LASExporter {
 
         data.append(0)
 
-        let sourceID = UInt16(index % 65535)
+        let sourceID = UInt16(index % 65536)
         data.appendLE(sourceID)
     }
 }

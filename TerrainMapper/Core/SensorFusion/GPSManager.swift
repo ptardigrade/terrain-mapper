@@ -53,9 +53,17 @@ final class GPSManager: NSObject, ObservableObject {
     private let pedometer       = CMPedometer()
     private let locationSubject = PassthroughSubject<CLLocation, Never>()
 
-    /// Number of steps taken since the last GPS fix.
-    private var stepsSinceLastFix: Int = 0
-    private var lastFixStepCount: Int  = 0
+    /// Latest cumulative step count delivered by the pedometer streaming callback.
+    /// Updated on every CMPedometer event so we can anchor to it on GPS fix.
+    private var latestTotalStepCount: Int = 0
+
+    /// Cumulative step count at the moment of the most recent GPS fix.
+    /// `newSteps = latestTotalStepCount - lastFixStepCount` gives steps since fix.
+    private var lastFixStepCount: Int = 0
+
+    /// Cumulative step count at the moment of the last PDR update.
+    /// Used to compute incremental steps (delta since last callback) for accurate PDR.
+    private var lastPDRStepCount: Int = 0
 
     /// PDR-extrapolated position (updated each time a new step event arrives).
     private var pdrLatitude:  Double = 0
@@ -117,7 +125,8 @@ final class GPSManager: NSObject, ObservableObject {
 
     private func handlePedometerData(_ data: CMPedometerData) {
         let totalSteps      = data.numberOfSteps.intValue
-        let newSteps        = totalSteps - lastFixStepCount
+        latestTotalStepCount = totalSteps          // keep running total up to date
+        let newSteps        = totalSteps - lastPDRStepCount
         guard newSteps > 0  else { return }
 
         // PDR: project each new step in current heading direction
@@ -129,6 +138,7 @@ final class GPSManager: NSObject, ObservableObject {
 
         pdrLatitude  += Δlat * 180 / .pi
         pdrLongitude += Δlon * 180 / .pi
+        lastPDRStepCount = totalSteps
 
         // Emit a synthetic PDR-derived location (low accuracy, altitude from last GPS)
         guard let lastFix = currentLocation else { return }
@@ -223,10 +233,11 @@ extension GPSManager: CLLocationManagerDelegate {
 
         Task { @MainActor in
             self.currentLocation  = location
-            // Anchor PDR to the new fix
+            // Anchor PDR to the new fix: use the streaming total, not a separate query
             self.pdrLatitude      = location.coordinate.latitude
             self.pdrLongitude     = location.coordinate.longitude
-            self.lastFixStepCount = (try? await self.currentStepCount()) ?? self.lastFixStepCount
+            self.lastFixStepCount = self.latestTotalStepCount
+            self.lastPDRStepCount = self.latestTotalStepCount
             self.locationSubject.send(location)
         }
     }
@@ -247,14 +258,4 @@ extension GPSManager: CLLocationManagerDelegate {
         print("[GPSManager] Location error: \(error.localizedDescription)")
     }
 
-    // Fetch current total step count asynchronously from CMPedometer.
-    private func currentStepCount() async throws -> Int {
-        try await withCheckedThrowingContinuation { cont in
-            let now = Date()
-            pedometer.queryPedometerData(from: now.addingTimeInterval(-1), to: now) { data, error in
-                if let error { cont.resume(throwing: error); return }
-                cont.resume(returning: data?.numberOfSteps.intValue ?? 0)
-            }
-        }
-    }
 }

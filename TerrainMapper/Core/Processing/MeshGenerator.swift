@@ -157,8 +157,6 @@ struct MeshGenerator {
             let boundary = edgeCount.filter { $0.value == 1 }.map(\.key)
 
             // Remove bad triangles
-            let badSet = Set(bad.map { ObjectIdentifier(AnyObject()) })
-            // Swift doesn't give object identity on structs, so filter differently:
             triangulation.removeAll { t in
                 bad.contains(where: { $0.a == t.a && $0.b == t.b && $0.c == t.c })
             }

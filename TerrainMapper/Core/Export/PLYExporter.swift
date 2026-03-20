@@ -52,7 +52,7 @@ final class PLYExporter {
         property uchar green
         property uchar blue
         element face \(faceCount)
-        property list uchar int vertex_indices
+        property list uchar int vertex_index
         end_header
         """
     }

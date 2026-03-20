@@ -37,10 +37,37 @@ final class AppSettings: ObservableObject {
     /// MAD threshold for outlier detection.
     @AppStorage("madThreshold") var madThreshold: Double = 3.5
 
+    // MARK: - Elevation calibration
+
+    /// Whether a manual elevation offset is applied during processing.
+    @AppStorage("elevationOffsetEnabled") var elevationOffsetEnabled: Bool = false
+
+    /// Fixed vertical offset in metres added to all ground elevations during processing.
+    /// Positive shifts elevations up; negative shifts down.
+    /// Useful to correct GPS altitude bias against a known benchmark.
+    @AppStorage("elevationOffset") var elevationOffset: Double = 0.0
+
     // MARK: - Export
 
+    /// Persisted comma-separated raw values of the selected export formats.
+    /// Stored as a plain string so @AppStorage can handle it directly.
+    @AppStorage("selectedExportFormatsRaw") private var selectedExportFormatsRaw: String = "geoJSON,csv"
+
     /// Which formats are selected for the next export.
-    @Published var selectedExportFormats: Set<ExportFormat> = [.geoJSON, .csv]
+    /// Computed from the persisted string so the selection survives app restarts.
+    var selectedExportFormats: Set<ExportFormat> {
+        get {
+            Set(selectedExportFormatsRaw
+                .split(separator: ",")
+                .compactMap { ExportFormat(rawValue: String($0)) })
+        }
+        set {
+            selectedExportFormatsRaw = newValue
+                .map(\.rawValue)
+                .sorted()
+                .joined(separator: ",")
+        }
+    }
 
     // MARK: - Display
 
@@ -56,5 +83,6 @@ final class AppSettings: ObservableObject {
         pipeline.interpolationMethod = interpolationMethod
         pipeline.enableGeoidCorrection = enableGeoidCorrection
         pipeline.madThreshold        = madThreshold
+        pipeline.elevationOffset = elevationOffsetEnabled ? elevationOffset : 0.0
     }
 }

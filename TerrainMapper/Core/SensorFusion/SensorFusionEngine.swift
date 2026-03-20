@@ -26,6 +26,7 @@ import Foundation
 
 enum SensorFusionError: LocalizedError {
     case sessionNotStarted
+    case captureAlreadyInProgress
     case stationaryGateTimeout
     case locationUnavailable
     case lidarCaptureFailed(Error)
@@ -34,6 +35,8 @@ enum SensorFusionError: LocalizedError {
         switch self {
         case .sessionNotStarted:
             return "Session has not been started. Call startSession() first."
+        case .captureAlreadyInProgress:
+            return "A point capture is already in progress. Wait for it to finish."
         case .stationaryGateTimeout:
             return "Device did not become stationary within the timeout period."
         case .locationUnavailable:
@@ -58,6 +61,18 @@ final class SensorFusionEngine: ObservableObject {
     @Published private(set) var tiltAngleDegrees: Double = 0.0
     @Published private(set) var currentAltitude: Double = 0.0
     @Published private(set) var gpsAccuracy: Double = 0.0
+    @Published private(set) var stationaryProgress: Double = 0.0
+    @Published private(set) var lidarCaptureProgress: Double = 0.0
+
+    /// Square root of Kalman covariance P[0,0] — estimated altitude uncertainty (±metres).
+    /// Starts high (~10 m) and decreases as GPS/baro measurements arrive.
+    @Published private(set) var altitudeUncertainty: Double = 10.0
+
+    /// Gravity X component (device frame) — forwarded from IMUManager for TiltMeterView.
+    @Published private(set) var gravityX: Double = 0.0
+
+    /// Gravity Y component (device frame) — forwarded from IMUManager for TiltMeterView.
+    @Published private(set) var gravityY: Double = 0.0
 
     // MARK: - Sub-managers (internal visibility for testing)
 
@@ -82,12 +97,12 @@ final class SensorFusionEngine: ObservableObject {
     // MARK: - Session lifecycle
 
     /// Start all sensor streams and begin accumulating data.
-    func startSession(stickHeight: Double = 2.0) {
+    func startSession(stickHeight: Double = 2.0, name: String = "") {
         guard !isSessionActive else { return }
 
         kalman     = KalmanFilter()
         kalmanInitialised = false
-        session    = SurveySession(stickHeight: stickHeight)
+        session    = SurveySession(stickHeight: stickHeight, name: name)
         pointCount = 0
 
         imuManager.start()
@@ -99,6 +114,10 @@ final class SensorFusionEngine: ObservableObject {
         bindSensorStreams()
         isSessionActive = true
     }
+
+    /// A snapshot of the active session for incremental persistence.
+    /// Returns nil if no session is in progress.
+    var currentSessionSnapshot: SurveySession? { session }
 
     /// Stop all sensors, run post-processing, and return the completed session.
     func endSession() -> SurveySession {
@@ -135,13 +154,18 @@ final class SensorFusionEngine: ObservableObject {
             throw SensorFusionError.sessionNotStarted
         }
         guard !isCapturingPoint else {
-            throw SensorFusionError.sessionNotStarted
+            throw SensorFusionError.captureAlreadyInProgress
         }
         isCapturingPoint = true
         defer { isCapturingPoint = false }
 
         // ── Step 1: Wait for stationary gate ─────────────────────────────
         try await waitForStationary()
+
+        // Re-check: session may have been ended while we were waiting for stationary.
+        guard isSessionActive, session != nil else {
+            throw SensorFusionError.sessionNotStarted
+        }
 
         // ── Step 2: Snapshot baro delta and run Kalman predict ────────────
         let baroDelta = barometerManager.currentRelativeAltitude
@@ -153,6 +177,11 @@ final class SensorFusionEngine: ObservableObject {
             lidarDistance = try await lidarManager.captureGroundDistance()
         } catch {
             throw SensorFusionError.lidarCaptureFailed(error)
+        }
+
+        // Re-check after LiDAR capture (takes ~3 s).
+        guard isSessionActive, session != nil else {
+            throw SensorFusionError.sessionNotStarted
         }
 
         // ── Step 4: Get current GPS location ─────────────────────────────
@@ -193,6 +222,22 @@ final class SensorFusionEngine: ObservableObject {
 
     // MARK: - Stationary gate
 
+    /// Removes and returns the last captured survey point from the active session.
+    /// Returns nil if there are no points or no active session.
+    @discardableResult
+    func undoLastPoint() -> SurveyPoint? {
+        guard session != nil, !session!.points.isEmpty else { return nil }
+        let removed = session!.points.removeLast()
+        pointCount = session?.points.count ?? 0
+        return removed
+    }
+
+    /// Appends a manually-constructed point to the active session.
+    func appendPoint(_ point: SurveyPoint) {
+        session?.points.append(point)
+        pointCount = session?.points.count ?? 0
+    }
+
     /// Suspends until the IMU reports stationary, or throws on timeout.
     private func waitForStationary() async throws {
         // Fast path: already stationary
@@ -220,6 +265,7 @@ final class SensorFusionEngine: ObservableObject {
                 guard let self else { return }
                 self.kalman.predict(dt: 1.0, baroAltitudeDelta: delta)
                 self.currentAltitude = self.kalman.state[0]
+                self.altitudeUncertainty = sqrt(max(0, self.kalman.covariance[0, 0]))
             }
             .store(in: &cancellables)
 
@@ -240,6 +286,7 @@ final class SensorFusionEngine: ObservableObject {
                     self.kalman.updateGPS(altitude: location.altitude)
                 }
                 self.currentAltitude = self.kalman.state[0]
+                self.altitudeUncertainty = sqrt(max(0, self.kalman.covariance[0, 0]))
             }
             .store(in: &cancellables)
 
@@ -252,5 +299,22 @@ final class SensorFusionEngine: ObservableObject {
             .map { $0 * 180 / .pi }
             .receive(on: RunLoop.main)
             .assign(to: &$tiltAngleDegrees)
+
+        imuManager.$gravityX
+            .receive(on: RunLoop.main)
+            .assign(to: &$gravityX)
+
+        imuManager.$gravityY
+            .receive(on: RunLoop.main)
+            .assign(to: &$gravityY)
+
+        imuManager.$stationaryProgress
+            .receive(on: RunLoop.main)
+            .assign(to: &$stationaryProgress)
+
+        // ── LiDAR capture progress ─────────────────────────────────────────
+        lidarManager.$captureProgress
+            .receive(on: RunLoop.main)
+            .assign(to: &$lidarCaptureProgress)
     }
 }

@@ -54,6 +54,7 @@ final class LiDARManager: NSObject, ObservableObject {
     // MARK: - Public state
 
     @Published private(set) var isCapturing: Bool = false
+    @Published var captureProgress: Double = 0.0
 
     // MARK: - Configuration
 
@@ -71,6 +72,10 @@ final class LiDARManager: NSObject, ObservableObject {
 
     private var arSession: ARSession?
     private var depthSamples: [Float] = []
+    /// Counts every ARFrame that arrives during a capture, regardless of how
+    /// many valid depth pixels it contributed.  This prevents infinite hangs
+    /// when most pixels are filtered (glass, mirror, sunlit grass, etc.).
+    private var frameCount: Int = 0
     private var continuation: CheckedContinuation<Double, Error>?
 
     // MARK: - Public API
@@ -94,6 +99,8 @@ final class LiDARManager: NSObject, ObservableObject {
         isCapturing   = true
         depthSamples  = []
         depthSamples.reserveCapacity(kFrameCount * 200)  // rough pre-allocation
+        frameCount    = 0
+        captureProgress = 0.0
 
         // Start (or restart) the AR session with depth enabled.
         let config = ARWorldTrackingConfiguration()
@@ -131,11 +138,14 @@ final class LiDARManager: NSObject, ObservableObject {
 extension LiDARManager: ARSessionDelegate {
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        // Called on ARKit's background queue — we dispatch to MainActor to
-        // keep mutable state access safe.
+        // Do all heavy pixel work here on ARKit's background queue.
+        // Only hop to MainActor to update state variables.
+        guard let depthData = frame.sceneDepth?.depthMap else { return }
+        let samples = LiDARManager.extractDepthSamples(from: depthData, roiFraction: 0.20)
+
         Task { @MainActor in
             guard self.isCapturing else { return }
-            self.processFrame(frame)
+            self.accumulateSamples(samples)
         }
     }
 
@@ -147,52 +157,63 @@ extension LiDARManager: ARSessionDelegate {
         }
     }
 
-    // MARK: - Frame processing (MainActor)
+    // MARK: - Depth extraction (background queue)
 
-    private func processFrame(_ frame: ARFrame) {
-        guard let depthData = frame.sceneDepth?.depthMap else { return }
+    private nonisolated static func extractDepthSamples(
+        from depthMap: CVPixelBuffer,
+        roiFraction: Double
+    ) -> [Float] {
+        let width  = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
 
-        // ── Sample central ROI of the depth map ──────────────────────────
-        let width  = CVPixelBufferGetWidth(depthData)
-        let height = CVPixelBufferGetHeight(depthData)
+        let roiX1 = Int(Double(width)  * (0.5 - roiFraction / 2))
+        let roiX2 = Int(Double(width)  * (0.5 + roiFraction / 2))
+        let roiY1 = Int(Double(height) * (0.5 - roiFraction / 2))
+        let roiY2 = Int(Double(height) * (0.5 + roiFraction / 2))
 
-        let roiX1 = Int(Double(width)  * (0.5 - kROIFraction / 2))
-        let roiX2 = Int(Double(width)  * (0.5 + kROIFraction / 2))
-        let roiY1 = Int(Double(height) * (0.5 - kROIFraction / 2))
-        let roiY2 = Int(Double(height) * (0.5 + kROIFraction / 2))
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
 
-        CVPixelBufferLockBaseAddress(depthData, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(depthData, .readOnly) }
-
-        guard let baseAddr = CVPixelBufferGetBaseAddress(depthData) else { return }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthData)
+        guard let baseAddr = CVPixelBufferGetBaseAddress(depthMap) else { return [] }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
         let floatBuffer = baseAddr.assumingMemoryBound(to: Float32.self)
+
+        var result: [Float] = []
+        result.reserveCapacity((roiX2 - roiX1) * (roiY2 - roiY1))
 
         for y in roiY1..<roiY2 {
             for x in roiX1..<roiX2 {
                 let index = y * (bytesPerRow / MemoryLayout<Float32>.size) + x
                 let depth = floatBuffer[index]
-                // ARKit returns 0 for invalid pixels; skip them.
                 if depth > 0.1 && depth < 20.0 {
-                    depthSamples.append(depth)
+                    result.append(depth)
                 }
             }
         }
+        return result
+    }
 
-        // ── Check if we have accumulated enough frames ───────────────────
-        // We count frames conservatively: each frame contributes a predictable
-        // number of ROI pixels; if total sample count exceeds kFrameCount × ROI_area
-        // we have sufficient coverage.
-        let roiPixelsPerFrame = (roiX2 - roiX1) * (roiY2 - roiY1)
-        let framesEquivalent  = depthSamples.count / max(roiPixelsPerFrame, 1)
+    // MARK: - Frame accumulation (MainActor)
 
-        guard framesEquivalent >= kFrameCount else { return }
+    private func accumulateSamples(_ samples: [Float]) {
+        // Capture is already resolved — discard stale frames still in flight from
+        // ARKit's background queue.
+        guard continuation != nil else { return }
 
-        // ── Compute median ────────────────────────────────────────────────
+        depthSamples.append(contentsOf: samples)
+
+        frameCount += 1
+        captureProgress = min(1.0, Double(frameCount) / Double(kFrameCount))
+        guard frameCount >= kFrameCount else { return }
+
+        guard !depthSamples.isEmpty else {
+            continuation?.resume(throwing: LiDARError.depthDataUnavailable)
+            continuation = nil
+            return
+        }
         let sorted = depthSamples.sorted()
         let median = Double(sorted[sorted.count / 2])
 
-        // Resolve the continuation
         continuation?.resume(returning: median)
         continuation = nil
     }

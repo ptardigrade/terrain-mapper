@@ -48,7 +48,6 @@ final class OBJExporter {
         Kd 0.8 0.8 0.8
         Ks 0.1 0.1 0.1
         Ns 10.0
-        map_Kd terrain_gradient.png
         """
 
         guard let objData = objString.data(using: .utf8),

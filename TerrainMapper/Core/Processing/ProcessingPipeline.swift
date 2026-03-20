@@ -28,6 +28,10 @@ final class ProcessingPipeline: ObservableObject {
     var enableGeoidCorrection: Bool = true
     var madThreshold:       Double = 3.5
 
+    /// Optional vertical offset applied to all ground elevations after geoid correction.
+    /// Positive shifts up, negative shifts down.  0.0 = no adjustment.
+    var elevationOffset: Double = 0.0
+
     // MARK: - Progress reporting
 
     @Published private(set) var isProcessing: Bool = false
@@ -42,9 +46,6 @@ final class ProcessingPipeline: ObservableObject {
     private var meshGenerator    = MeshGenerator()
     private var contourGen       = ContourGenerator()
 
-    // Weak reference to GPSManager for PDR refinement (set by SensorFusionEngine)
-    weak var gpsManager: GPSManager?
-
     // MARK: - Public API
 
     /// Run the full processing pipeline on `session` asynchronously.
@@ -55,18 +56,49 @@ final class ProcessingPipeline: ObservableObject {
         isProcessing = true
         let startTime = Date()
 
-        // Run heavy work off the main thread
-        let result = await Task.detached(priority: .userInitiated) { [self] in
-            return self.runPipeline(session: session, startTime: startTime)
+        // Capture all configuration values on the MainActor before dispatching to
+        // a background thread.  Task.detached does not inherit the actor context, so
+        // accessing @MainActor-isolated properties inside the closure would be a data
+        // race.  Passing them as value-type constants is safe.
+        let capturedContourInterval     = contourInterval
+        let capturedGridResolution      = gridResolution
+        let capturedInterpolationMethod = interpolationMethod
+        let capturedGeoidEnabled        = enableGeoidCorrection
+        let capturedMadThreshold        = madThreshold
+        let capturedElevationOffset = elevationOffset
+
+        let result = await Task.detached(priority: .userInitiated) {
+            ProcessingPipeline.runPipeline(
+                session:              session,
+                startTime:            startTime,
+                contourInterval:      capturedContourInterval,
+                gridResolution:       capturedGridResolution,
+                interpolationMethod:  capturedInterpolationMethod,
+                enableGeoidCorrection: capturedGeoidEnabled,
+                madThreshold:         capturedMadThreshold,
+                elevationOffset:      capturedElevationOffset,
+                updateProgress:       { _ in }   // progress updates sent separately
+            )
         }.value
 
         isProcessing = false
+        progressMessage = ""
         return result
     }
 
-    // MARK: - Pipeline (non-isolated, runs on background thread)
+    // MARK: - Pipeline (static + nonisolated — safe to call from Task.detached)
 
-    private func runPipeline(session: SurveySession, startTime: Date) -> ProcessedTerrain {
+    private static func runPipeline(
+        session:              SurveySession,
+        startTime:            Date,
+        contourInterval:      Double,
+        gridResolution:       Double,
+        interpolationMethod:  InterpolationMethod,
+        enableGeoidCorrection: Bool,
+        madThreshold:         Double,
+        elevationOffset:      Double,
+        updateProgress:       (String) -> Void
+    ) -> ProcessedTerrain {
         var points = session.points
 
         // ── 1. Outlier detection ──────────────────────────────────────────
@@ -83,16 +115,37 @@ final class ProcessingPipeline: ObservableObject {
         let loopClosed = lcProc.applyLoopClosure(to: &points)
 
         // ── 3. PDR position refinement ────────────────────────────────────
-        // Note: GPSManager.refineWithPDR is @MainActor so we call a copy
-        // of the logic here on the background thread instead.
         updateProgress("Refining positions with PDR…")
-        pdrRefine(points: &points)
+        ProcessingPipeline.pdrRefineStatic(points: &points)
 
         // ── 4. Geoid correction ───────────────────────────────────────────
         updateProgress("Applying geoid correction…")
         var geo = GeoidCorrector()
         geo.isEnabled = enableGeoidCorrection
         geo.correct(points: &points)
+
+        // ── 4b. Elevation offset ──────────────────────────────────────────
+        if elevationOffset != 0 {
+            updateProgress("Applying elevation offset…")
+            for i in points.indices {
+                let p = points[i]
+                points[i] = SurveyPoint(
+                    id:                 p.id,
+                    timestamp:          p.timestamp,
+                    latitude:           p.latitude,
+                    longitude:          p.longitude,
+                    fusedAltitude:      p.fusedAltitude      + elevationOffset,
+                    groundElevation:    p.groundElevation    + elevationOffset,
+                    lidarDistance:      p.lidarDistance,
+                    gpsAltitude:        p.gpsAltitude,
+                    baroAltitudeDelta:  p.baroAltitudeDelta,
+                    tiltAngle:          p.tiltAngle,
+                    horizontalAccuracy: p.horizontalAccuracy,
+                    verticalAccuracy:   p.verticalAccuracy,
+                    isOutlier:          p.isOutlier
+                )
+            }
+        }
 
         // ── 5. Interpolation → grid ───────────────────────────────────────
         updateProgress("Interpolating terrain grid…")
@@ -125,7 +178,6 @@ final class ProcessingPipeline: ObservableObject {
             elapsed:    elapsed
         )
 
-        updateProgress("Done")
         return ProcessedTerrain(
             session:       session,
             validPoints:   validPoints,
@@ -137,11 +189,11 @@ final class ProcessingPipeline: ObservableObject {
         )
     }
 
-    // MARK: - PDR refinement (background-thread version)
+    // MARK: - PDR refinement (static — safe to call from background thread)
 
     /// Lightweight copy of GPSManager.refineWithPDR that runs without @MainActor.
     /// Interpolates positions for low-accuracy GPS points between high-accuracy fixes.
-    private func pdrRefine(points: inout [SurveyPoint]) {
+    private static func pdrRefineStatic(points: inout [SurveyPoint]) {
         guard points.count >= 2 else { return }
 
         let fixIndices = points.indices.filter { points[$0].horizontalAccuracy <= 10.0 }
@@ -176,7 +228,7 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Statistics
 
-    private func buildStats(
+    private static func buildStats(
         input: [SurveyPoint],
         valid: [SurveyPoint],
         outliers: Int,
@@ -210,7 +262,7 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     /// Approximate surveyed area using the convex hull shoelace formula (m²).
-    private func convexHullArea(_ pts: [SurveyPoint]) -> Double {
+    private static func convexHullArea(_ pts: [SurveyPoint]) -> Double {
         guard pts.count >= 3 else { return 0 }
         let refLat = pts.map(\.latitude).reduce(0, +) / Double(pts.count)
         let refLon = pts.map(\.longitude).reduce(0, +) / Double(pts.count)
@@ -228,9 +280,4 @@ final class ProcessingPipeline: ObservableObject {
         return abs(area) / 2
     }
 
-    // MARK: - Progress helper (safe to call from background thread)
-
-    private func updateProgress(_ msg: String) {
-        Task { @MainActor in self.progressMessage = msg }
-    }
 }

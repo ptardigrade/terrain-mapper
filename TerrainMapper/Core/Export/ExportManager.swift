@@ -35,26 +35,37 @@ final class ExportManager: ObservableObject {
 
         isExporting = true
         exportProgress = 0.0
-        defer { isExporting = false }
 
+        // Create the output folder on the main actor (needs FileManager, fine for metadata ops).
         let exportFolder = try createExportFolder()
-        var exportedURLs: [URL] = []
-
         let sortedFormats = formats.sorted { $0.rawValue < $1.rawValue }
 
-        for (index, format) in sortedFormats.enumerated() {
-            do {
-                let url = try exportFormat(format, terrain: terrain, to: exportFolder)
-                exportedURLs.append(url)
-            } catch {
-                throw ExportError.writeFailure(exportFolder, error)
+        // Dispatch all heavy encoding + disk I/O to a background thread so the UI
+        // stays responsive during large GeoTIFF / LAS / PLY generation.
+        let result: Result<[URL], Error> = await Task.detached(priority: .userInitiated) {
+            var urls: [URL] = []
+            for format in sortedFormats {
+                do {
+                    let url = try ExportManager.exportFormatStatic(format, terrain: terrain, to: exportFolder)
+                    urls.append(url)
+                } catch {
+                    return .failure(ExportError.writeFailure(exportFolder, error))
+                }
             }
+            return .success(urls)
+        }.value
 
-            exportProgress = Double(index + 1) / Double(sortedFormats.count)
+        isExporting = false
+
+        switch result {
+        case .success(let urls):
+            // Update progress to 1.0 on main actor after all formats complete.
+            exportProgress = 1.0
+            lastExportURLs = urls
+            return urls
+        case .failure(let error):
+            throw error
         }
-
-        lastExportURLs = exportedURLs
-        return exportedURLs
     }
 
     func shareURL(for urls: [URL]) -> URL? {
@@ -82,7 +93,9 @@ final class ExportManager: ObservableObject {
         return exportURL
     }
 
-    private func exportFormat(_ format: ExportFormat, terrain: ProcessedTerrain, to folder: URL) throws {
+    /// Static variant — callable from a `Task.detached` without actor context.
+    @discardableResult
+    private static func exportFormatStatic(_ format: ExportFormat, terrain: ProcessedTerrain, to folder: URL) throws -> URL {
         let fileName: String
         let data: Data
 
@@ -108,17 +121,16 @@ final class ExportManager: ObservableObject {
             data = try exporter.export(terrain: terrain)
 
         case .obj:
-            fileName = "terrain.obj"
             let exporter = OBJExporter()
             let (objData, mtlData) = try exporter.export(terrain: terrain)
 
-            let objURL = folder.appendingPathComponent(fileName)
+            let objURL = folder.appendingPathComponent("terrain.obj")
             try objData.write(to: objURL)
 
             let mtlURL = folder.appendingPathComponent("terrain.mtl")
             try mtlData.write(to: mtlURL)
 
-            return
+            return objURL
 
         case .csv:
             fileName = "survey_points.csv"
@@ -128,6 +140,7 @@ final class ExportManager: ObservableObject {
 
         let fileURL = folder.appendingPathComponent(fileName)
         try data.write(to: fileURL)
+        return fileURL
     }
 
     private func timestamp() -> String {

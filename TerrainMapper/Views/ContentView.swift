@@ -47,6 +47,12 @@ struct ContentView: View {
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
                 }
+
+            // ── History tab ───────────────────────────────────────────────
+            SessionHistoryView()
+                .tabItem {
+                    Label("History", systemImage: "clock.arrow.circlepath")
+                }
         }
         .environmentObject(pipeline)
     }
@@ -101,4 +107,6 @@ struct ContentView: View {
     ContentView()
         .environmentObject(SensorFusionEngine())
         .environmentObject(AppSettings())
+        .environmentObject(ExportManager())
+        .environmentObject(SessionStore())
 }
