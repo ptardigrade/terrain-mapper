@@ -111,7 +111,7 @@ private extension Array where Element == Double {
         if count == 1 { return self[0] }
         let idx  = p * Double(count - 1)
         let lo   = Int(idx)
-        let hi   = min(lo + 1, count - 1)
+        let hi   = Swift.min(lo + 1, count - 1)
         let frac = idx - Double(lo)
         return self[lo] * (1 - frac) + self[hi] * frac
     }

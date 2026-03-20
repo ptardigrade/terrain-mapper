@@ -88,7 +88,7 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Pipeline (static + nonisolated — safe to call from Task.detached)
 
-    private static func runPipeline(
+    private nonisolated static func runPipeline(
         session:              SurveySession,
         startTime:            Date,
         contourInterval:      Double,
@@ -193,7 +193,7 @@ final class ProcessingPipeline: ObservableObject {
 
     /// Lightweight copy of GPSManager.refineWithPDR that runs without @MainActor.
     /// Interpolates positions for low-accuracy GPS points between high-accuracy fixes.
-    private static func pdrRefineStatic(points: inout [SurveyPoint]) {
+    private nonisolated static func pdrRefineStatic(points: inout [SurveyPoint]) {
         guard points.count >= 2 else { return }
 
         let fixIndices = points.indices.filter { points[$0].horizontalAccuracy <= 10.0 }
@@ -228,7 +228,7 @@ final class ProcessingPipeline: ObservableObject {
 
     // MARK: - Statistics
 
-    private static func buildStats(
+    private nonisolated static func buildStats(
         input: [SurveyPoint],
         valid: [SurveyPoint],
         outliers: Int,
@@ -262,7 +262,7 @@ final class ProcessingPipeline: ObservableObject {
     }
 
     /// Approximate surveyed area using the convex hull shoelace formula (m²).
-    private static func convexHullArea(_ pts: [SurveyPoint]) -> Double {
+    private nonisolated static func convexHullArea(_ pts: [SurveyPoint]) -> Double {
         guard pts.count >= 3 else { return 0 }
         let refLat = pts.map(\.latitude).reduce(0, +) / Double(pts.count)
         let refLon = pts.map(\.longitude).reduce(0, +) / Double(pts.count)

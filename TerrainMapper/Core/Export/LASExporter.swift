@@ -31,7 +31,7 @@ final class LASExporter {
 
         writeHeader(
             to: &data,
-            pointCount: UInt32(min(UInt32.max, allPoints.count)),
+            pointCount: UInt32(Swift.min(allPoints.count, Int(UInt32.max))),
             pointCountExtended: UInt64(allPoints.count),
             dayOfYear: UInt16(dayOfYear),
             year: year,
@@ -193,21 +193,21 @@ final class LASExporter {
 private extension Data {
     mutating func appendLE<T: FixedWidthInteger>(_ value: T) {
         var mutableValue = value.littleEndian
-        withUnsafeBytes(of: &mutableValue) { buffer in
+        Swift.withUnsafeBytes(of: &mutableValue) { buffer in
             self.append(contentsOf: buffer)
         }
     }
 
     mutating func appendFloat32LE(_ value: Float) {
         var mutableValue = value.bitPattern.littleEndian
-        withUnsafeBytes(of: &mutableValue) { buffer in
+        Swift.withUnsafeBytes(of: &mutableValue) { buffer in
             self.append(contentsOf: buffer)
         }
     }
 
     mutating func appendFloat64LE(_ value: Double) {
         var mutableValue = value.bitPattern.littleEndian
-        withUnsafeBytes(of: &mutableValue) { buffer in
+        Swift.withUnsafeBytes(of: &mutableValue) { buffer in
             self.append(contentsOf: buffer)
         }
     }

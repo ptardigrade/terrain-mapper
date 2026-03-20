@@ -46,7 +46,7 @@ import Foundation
 
 /// A 3×3 matrix stored as a flat row-major array of 9 Double values.
 /// Index mapping: element (row, col) = data[row * 3 + col]
-private struct Matrix3x3 {
+struct Matrix3x3 {
     var data: [Double]   // always 9 elements
 
     static let identity = Matrix3x3(data: [

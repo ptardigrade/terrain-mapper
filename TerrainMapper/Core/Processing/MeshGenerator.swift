@@ -142,7 +142,7 @@ struct MeshGenerator {
             // Find all triangles whose circumcircle contains p
             var bad: [Tri] = []
             for t in triangulation {
-                if inCircumcircle(p: (p.x, p.y), tri: t, pts: allPts) {
+                if inCircumcircle(p: (p.x, p.y), tri: (a: t.a, b: t.b, c: t.c), pts: allPts) {
                     bad.append(t)
                 }
             }
