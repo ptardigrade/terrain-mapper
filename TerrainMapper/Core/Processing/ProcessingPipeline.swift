@@ -35,7 +35,7 @@ final class ProcessingPipeline: ObservableObject {
     // MARK: - Progress reporting
 
     @Published private(set) var isProcessing: Bool = false
-    @Published private(set) var progressMessage: String = ""
+    @Published fileprivate(set) var progressMessage: String = ""
 
     // MARK: - Sub-processors
 

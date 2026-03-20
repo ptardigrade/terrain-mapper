@@ -51,6 +51,9 @@
 		/* Phase 5: Persistence + History */
 		FF000002000000000000001A /* SessionStore.swift in Sources */         = {isa = PBXBuildFile; fileRef = FF000002000000000000001B; };
 		FF000002000000000000002A /* SessionHistoryView.swift in Sources */   = {isa = PBXBuildFile; fileRef = FF000002000000000000002B; };
+		/* Phase 6: Theme + PathTracking */
+		GG0000020000000000000001 /* Theme.swift in Sources */                = {isa = PBXBuildFile; fileRef = GG0000010000000000000001; };
+		GG0000020000000000000002 /* PathTrackRecorder.swift in Sources */    = {isa = PBXBuildFile; fileRef = GG0000010000000000000002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -100,6 +103,9 @@
 		/* Phase 5: Persistence + History */
 		FF000002000000000000001B /* SessionStore.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		FF000002000000000000002B /* SessionHistoryView.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryView.swift; sourceTree = "<group>"; };
+		/* Phase 6: Theme + PathTracking */
+		GG0000010000000000000001 /* Theme.swift */                 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		GG0000010000000000000002 /* PathTrackRecorder.swift */     = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathTrackRecorder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -172,6 +178,7 @@
 				AA000001000000000000008B /* IMUManager.swift */,
 				AA000001000000000000009B /* GPSManager.swift */,
 				AA00000100000000000000AB /* SensorFusionEngine.swift */,
+				GG0000010000000000000002 /* PathTrackRecorder.swift */,
 			);
 			path = SensorFusion;
 			sourceTree = "<group>";
@@ -228,6 +235,7 @@
 				CC0000010000000000000004 /* ResultsView.swift */,
 				CC0000010000000000000005 /* SettingsView.swift */,
 				FF000002000000000000002B /* SessionHistoryView.swift */,
+				GG0000010000000000000001 /* Theme.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -353,6 +361,9 @@
 				/* Phase 5 */
 				FF000002000000000000001A /* SessionStore.swift in Sources */,
 				FF000002000000000000002A /* SessionHistoryView.swift in Sources */,
+				/* Phase 6 */
+				GG0000020000000000000001 /* Theme.swift in Sources */,
+				GG0000020000000000000002 /* PathTrackRecorder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
