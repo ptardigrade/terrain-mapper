@@ -1,0 +1,60 @@
+// AppSettings.swift
+// TerrainMapper
+//
+// Observable settings object shared across the app via @EnvironmentObject.
+// Persisted to UserDefaults so choices survive app restarts.
+
+import Foundation
+import Combine
+import SwiftUI
+
+@MainActor
+final class AppSettings: ObservableObject {
+
+    // MARK: - Survey / capture
+
+    /// Measurement-stick height in metres (fallback when LiDAR is unavailable).
+    @AppStorage("stickHeight") var stickHeight: Double = 2.0
+
+    // MARK: - Processing
+
+    /// Contour interval in metres.
+    @AppStorage("contourInterval") var contourInterval: Double = 0.5
+
+    /// Grid cell size in metres.
+    @AppStorage("gridResolution") var gridResolution: Double = 0.5
+
+    /// Interpolation method.
+    @AppStorage("interpolationMethod") private var interpolationMethodRaw: String = "IDW"
+    var interpolationMethod: InterpolationMethod {
+        get { InterpolationMethod(rawValue: interpolationMethodRaw) ?? .idw }
+        set { interpolationMethodRaw = newValue.rawValue }
+    }
+
+    /// Apply EGM96 geoid correction (GPS ellipsoidal → orthometric/MSL altitude).
+    @AppStorage("enableGeoidCorrection") var enableGeoidCorrection: Bool = true
+
+    /// MAD threshold for outlier detection.
+    @AppStorage("madThreshold") var madThreshold: Double = 3.5
+
+    // MARK: - Export
+
+    /// Which formats are selected for the next export.
+    @Published var selectedExportFormats: Set<ExportFormat> = [.geoJSON, .csv]
+
+    // MARK: - Display
+
+    /// Show outlier points on the map (faded).
+    @AppStorage("showOutliers") var showOutliers: Bool = true
+
+    // MARK: - Apply to pipeline
+
+    /// Configure a ProcessingPipeline with the current settings.
+    func configure(_ pipeline: ProcessingPipeline) {
+        pipeline.contourInterval     = contourInterval
+        pipeline.gridResolution      = gridResolution
+        pipeline.interpolationMethod = interpolationMethod
+        pipeline.enableGeoidCorrection = enableGeoidCorrection
+        pipeline.madThreshold        = madThreshold
+    }
+}
