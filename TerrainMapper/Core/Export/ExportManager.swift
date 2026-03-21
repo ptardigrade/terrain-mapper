@@ -138,6 +138,11 @@ final class ExportManager: ObservableObject {
             let exporter = OBJExporter()
             data = try exporter.export(terrain: terrain)
 
+        case .dxf:
+            fileName = "\(baseName).dxf"
+            let exporter = DXFExporter()
+            data = try exporter.export(terrain: terrain)
+
         case .csv:
             fileName = "\(baseName).csv"
             let exporter = CSVExporter()

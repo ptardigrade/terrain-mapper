@@ -154,6 +154,7 @@ enum ExportFormat: String, CaseIterable, Hashable, Identifiable {
     case geoJSON = "GeoJSON"
     case geoTIFF = "GeoTIFF"
     case obj     = "OBJ"
+    case dxf     = "DXF"
     case csv     = "CSV"
     var id: String { rawValue }
     var fileExtension: String {
@@ -163,6 +164,7 @@ enum ExportFormat: String, CaseIterable, Hashable, Identifiable {
         case .geoJSON: return "geojson"
         case .geoTIFF: return "tif"
         case .obj:     return "obj"
+        case .dxf:     return "dxf"
         case .csv:     return "csv"
         }
     }
@@ -173,6 +175,7 @@ enum ExportFormat: String, CaseIterable, Hashable, Identifiable {
         case .geoJSON: return "GeoJSON"
         case .geoTIFF: return "GeoTIFF Raster"
         case .obj:     return "Wavefront OBJ Mesh"
+        case .dxf:     return "AutoCAD DXF Contours (2D+3D)"
         case .csv:     return "Survey Points CSV"
         }
     }

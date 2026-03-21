@@ -45,6 +45,8 @@
 		DD0000020000000000000005 /* OBJExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000005; };
 		DD0000020000000000000006 /* CSVExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000006; };
 		DD0000020000000000000007 /* ExportManager.swift in Sources */        = {isa = PBXBuildFile; fileRef = DD0000010000000000000007; };
+		DD0000020000000000000008 /* DXFExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000008; };
+		DD0000020000000000000009 /* DiagnosticExporter.swift in Sources */   = {isa = PBXBuildFile; fileRef = DD0000010000000000000009; };
 		/* New frameworks */
 		EE0000020000000000000001 /* SceneKit.framework in Frameworks */      = {isa = PBXBuildFile; fileRef = EE0000010000000000000001; };
 		EE0000020000000000000002 /* MapKit.framework in Frameworks */        = {isa = PBXBuildFile; fileRef = EE0000010000000000000002; };
@@ -97,6 +99,8 @@
 		DD0000010000000000000005 /* OBJExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBJExporter.swift; sourceTree = "<group>"; };
 		DD0000010000000000000006 /* CSVExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVExporter.swift; sourceTree = "<group>"; };
 		DD0000010000000000000007 /* ExportManager.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportManager.swift; sourceTree = "<group>"; };
+		DD0000010000000000000008 /* DXFExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DXFExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000009 /* DiagnosticExporter.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticExporter.swift; sourceTree = "<group>"; };
 		/* New frameworks */
 		EE0000010000000000000001 /* SceneKit.framework */          = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = System/Library/Frameworks/SceneKit.framework; sourceTree = SDKROOT; };
 		EE0000010000000000000002 /* MapKit.framework */            = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = System/Library/Frameworks/MapKit.framework; sourceTree = SDKROOT; };
@@ -220,6 +224,8 @@
 				DD0000010000000000000005 /* OBJExporter.swift */,
 				DD0000010000000000000006 /* CSVExporter.swift */,
 				DD0000010000000000000007 /* ExportManager.swift */,
+				DD0000010000000000000008 /* DXFExporter.swift */,
+				DD0000010000000000000009 /* DiagnosticExporter.swift */,
 			);
 			path = Export;
 			sourceTree = "<group>";
@@ -358,6 +364,8 @@
 				DD0000020000000000000005 /* OBJExporter.swift in Sources */,
 				DD0000020000000000000006 /* CSVExporter.swift in Sources */,
 				DD0000020000000000000007 /* ExportManager.swift in Sources */,
+				DD0000020000000000000008 /* DXFExporter.swift in Sources */,
+				DD0000020000000000000009 /* DiagnosticExporter.swift in Sources */,
 				/* Phase 5 */
 				FF000002000000000000001A /* SessionStore.swift in Sources */,
 				FF000002000000000000002A /* SessionHistoryView.swift in Sources */,

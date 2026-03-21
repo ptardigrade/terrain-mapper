@@ -22,6 +22,11 @@ struct ResultsView: View {
     @State private var exportErrorMessage: String = ""
     @State private var showShareSheet: Bool = false
     @State private var shareURLs:      [URL] = []
+    // Contour view zoom/pan state
+    @State private var contourScale: CGFloat = 1.0
+    @State private var contourOffset: CGSize = .zero
+    @State private var lastContourScale: CGFloat = 1.0
+    @State private var lastContourOffset: CGSize = .zero
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var exportManager: ExportManager
 
@@ -68,6 +73,15 @@ struct ResultsView: View {
             .navigationTitle("Survey Results")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    // Dev diagnostic export — dumps all raw sensor data as JSON
+                    Button {
+                        Task { await runDiagnosticExport() }
+                    } label: {
+                        Image(systemName: "ant")
+                    }
+                    .help("Export raw sensor data (dev)")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task { await runExport() }
@@ -110,6 +124,29 @@ struct ResultsView: View {
                 ActivityShareSheet(urls: shareURLs)
                     .presentationDetents([.medium, .large])
             }
+        }
+    }
+
+    // MARK: - Diagnostic export (dev)
+
+    private func runDiagnosticExport() async {
+        do {
+            let exporter = DiagnosticExporter()
+            let data = try exporter.export(terrain: terrain)
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let folder = docs.appendingPathComponent("TerrainMapper")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let safeName = terrain.session.name
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "[^a-zA-Z0-9 _-]", with: "_", options: .regularExpression)
+            let fileName = safeName.isEmpty ? "diagnostic" : safeName
+            let url = folder.appendingPathComponent("\(fileName)_diagnostic.json")
+            try data.write(to: url)
+            shareURLs = [url]
+            showShareSheet = true
+        } catch {
+            exportErrorMessage = "Diagnostic export failed: \(error.localizedDescription)"
+            showExportError = true
         }
     }
 
@@ -201,9 +238,16 @@ struct ResultsView: View {
 
                 let pad: Double = 30
 
+                let scale = contourScale
+                let offset = contourOffset
+
                 func project(_ c: (latitude: Double, longitude: Double)) -> CGPoint {
-                    let x = pad + (c.longitude - lonMin) / lonSpan * (size.width  - 2*pad)
-                    let y = size.height - pad - (c.latitude - latMin) / latSpan * (size.height - 2*pad)
+                    let baseX = pad + (c.longitude - lonMin) / lonSpan * (size.width  - 2*pad)
+                    let baseY = size.height - pad - (c.latitude - latMin) / latSpan * (size.height - 2*pad)
+                    // Apply zoom centred on the view centre, then translate
+                    let cx = size.width / 2, cy = size.height / 2
+                    let x = (baseX - cx) * scale + cx + offset.width
+                    let y = (baseY - cy) * scale + cy + offset.height
                     return CGPoint(x: x, y: y)
                 }
 
@@ -212,19 +256,21 @@ struct ResultsView: View {
                 let elevMin = sortedContours.first?.elevation ?? 0
                 let elevMax = sortedContours.last?.elevation ?? 1
                 let span    = max(1, elevMax - elevMin)
-                // Use the sorted array to compute the actual contour interval.
                 let interval: Double = sortedContours.count >= 2
                     ? abs(sortedContours[1].elevation - sortedContours[0].elevation)
                     : 0.5
+
+                // Adaptive label size — scales with zoom
+                let labelSize = max(6, min(14, 8 * scale))
 
                 for contour in sortedContours {
                     guard contour.coordinates.count >= 2 else { continue }
 
                     let isMajor = interval > 0 && contour.elevation.truncatingRemainder(dividingBy: interval * 5) < interval / 2
                     let frac    = (contour.elevation - elevMin) / span
-                    let hue     = 0.67 * (1 - frac)   // blue→green→red
+                    let hue     = 0.67 * (1 - frac)
                     let color   = Color(hue: hue, saturation: 0.7, brightness: 0.6)
-                    let lineWidth: Double = isMajor ? 1.5 : 0.8
+                    let lineWidth: Double = (isMajor ? 1.5 : 0.8) * Double(scale)
 
                     var path = Path()
                     let pts = contour.coordinates.map(project)
@@ -233,16 +279,64 @@ struct ResultsView: View {
 
                     ctx.stroke(path, with: .color(color), lineWidth: lineWidth)
 
-                    // Elevation label on major contours (at midpoint of line)
                     if isMajor, let mid = pts.middle {
                         ctx.draw(
                             Text(String(format: "%.1fm", contour.elevation))
-                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .font(.system(size: labelSize, weight: .medium, design: .monospaced))
                                 .foregroundStyle(color),
                             at: mid, anchor: .center
                         )
                     }
                 }
+            }
+            .gesture(
+                MagnifyGesture()
+                    .onChanged { value in
+                        contourScale = max(0.5, min(10, lastContourScale * value.magnification))
+                    }
+                    .onEnded { _ in
+                        lastContourScale = contourScale
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture()
+                    .onChanged { value in
+                        contourOffset = CGSize(
+                            width:  lastContourOffset.width  + value.translation.width,
+                            height: lastContourOffset.height + value.translation.height
+                        )
+                    }
+                    .onEnded { _ in
+                        lastContourOffset = contourOffset
+                    }
+            )
+            .overlay(alignment: .topTrailing) {
+                // Reset zoom button
+                if contourScale != 1.0 || contourOffset != .zero {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            contourScale = 1.0
+                            contourOffset = .zero
+                            lastContourScale = 1.0
+                            lastContourOffset = .zero
+                        }
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(.black.opacity(0.5), in: Circle())
+                    }
+                    .padding(12)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                Text("Pinch to zoom  •  Drag to pan")
+                    .font(.caption2)
+                    .foregroundStyle(.white)
+                    .padding(8)
+                    .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(12)
             }
         }
         .background(Theme.background)
