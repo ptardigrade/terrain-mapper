@@ -59,22 +59,31 @@ struct SurveyView: View {
 
     // MARK: - Body
 
+    // Height of the status bar / Dynamic Island safe area — used to
+    // position floating controls below the notch without a GeometryReader.
+    private var statusBarHeight: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first?.safeAreaInsets.top ?? 59
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             // Full-bleed satellite map
             mapLayer
 
-            // Floating top bar (sits within safe area, above map)
-            VStack(spacing: 0) {
-                topBar
-                Spacer()
-            }
+            // Floating map controls — End / Undo / Fit (top-right, below status bar)
+            mapOverlayControls
 
             // Bottom survey panel (sits above tab bar)
             surveyPanel
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
         }
+        // Extend only the TOP edge behind the status bar so the map fills
+        // the full width. The bottom edge stays constrained by the TabView
+        // so the panel doesn't slide behind the tab bar.
+        .ignoresSafeArea(.all, edges: .top)
         // Toast notification floats above the top bar
         .overlay(alignment: .top) {
             Group {
@@ -142,30 +151,24 @@ struct SurveyView: View {
             MapCompass()
             MapUserLocationButton()
         }
-        .ignoresSafeArea()
     }
 
-    // MARK: - Floating top bar
+    private func mapControlButton(systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.onSurface)
+                .frame(width: 38, height: 38)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
 
-    private var topBar: some View {
-        HStack(spacing: 12) {
-            // Brand mark
+    /// Floating controls that sit in the top-right corner of the map,
+    /// manually offset below the status bar / Dynamic Island.
+    private var mapOverlayControls: some View {
+        VStack {
             HStack(spacing: 8) {
-                VStack(spacing: 2) {
-                    Rectangle().fill(Theme.primary.opacity(0.4)).frame(width: 18, height: 1.5)
-                    Rectangle().fill(Theme.primary.opacity(0.7)).frame(width: 24, height: 1.5)
-                    Rectangle().fill(Theme.primary).frame(width: 14, height: 1.5)
-                }
-                Text("TERRAIN MAPPER")
-                    .font(.system(size: 14, weight: .black))
-                    .tracking(-0.3)
-                    .foregroundStyle(Theme.primary)
-            }
-
-            Spacer()
-
-            // Action controls
-            HStack(spacing: 8) {
+                Spacer()
                 if sessionStarted && !capturedPoints.isEmpty {
                     mapControlButton(systemImage: "arrow.uturn.backward") {
                         if let removed = engine.undoLastPoint() {
@@ -181,48 +184,20 @@ struct SurveyView: View {
                         fitMapToPoints()
                     }
                 }
-                if !sessionStarted {
-                    Button { showNameSheet = true } label: {
-                        Text("Start")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color(hex: "1E2B14"))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 9)
-                            .background(Theme.primaryGradient, in: RoundedRectangle(cornerRadius: 10))
-                    }
-                } else {
+                if sessionStarted {
                     Button { checkEndSession() } label: {
                         Text("End")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
+                            .padding(.horizontal, 14)
                             .padding(.vertical, 9)
                             .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
                     }
                 }
             }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        // Two-layer background: thin material blur + a darker tint so the bar is
-        // always legible against dark satellite imagery.
-        .background(.ultraThinMaterial)
-        .background(Theme.background.opacity(0.65))
-        // Bottom hairline separator
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(.white.opacity(0.07))
-                .frame(height: 0.5)
-        }
-    }
-
-    private func mapControlButton(systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.onSurface)
-                .frame(width: 38, height: 38)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .padding(.top, statusBarHeight + 8)
+            .padding(.horizontal, 16)
+            Spacer()
         }
     }
 
@@ -400,7 +375,7 @@ struct SurveyView: View {
             HStack(spacing: 10) {
                 if !sessionStarted {
                     Image(systemName: "play.circle.fill").font(.title3)
-                    Text("Tap Start to begin").font(.system(size: 17, weight: .bold))
+                    Text("Start Survey").font(.system(size: 17, weight: .bold))
                 } else if isCapturing {
                     VStack(spacing: 6) {
                         Text("Sampling LiDAR…").font(.system(size: 17, weight: .bold))
@@ -434,7 +409,9 @@ struct SurveyView: View {
     @ViewBuilder
     private var captureButtonBackground: some View {
         if !sessionStarted {
-            RoundedRectangle(cornerRadius: 14).fill(Theme.surfaceContainerHighest)
+            // Green gradient — the start button should look as actionable as
+            // the capture button, not muted/disabled.
+            RoundedRectangle(cornerRadius: 14).fill(Theme.primaryGradient)
         } else if isCapturing {
             RoundedRectangle(cornerRadius: 14).fill(Theme.primary.opacity(0.75))
         } else if gpsTooInaccurate {
