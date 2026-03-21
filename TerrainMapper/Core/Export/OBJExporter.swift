@@ -2,7 +2,7 @@ import Foundation
 
 final class OBJExporter {
 
-    func export(terrain: ProcessedTerrain) throws -> (obj: Data, mtl: Data) {
+    func export(terrain: ProcessedTerrain, baseName: String = "terrain") throws -> (obj: Data, mtl: Data) {
         let mesh = terrain.mesh
 
         guard !mesh.vertices.isEmpty else {
@@ -16,7 +16,7 @@ final class OBJExporter {
         var objString = ""
 
         objString += "# TerrainMapper export\n"
-        objString += "mtllib terrain.mtl\n"
+        objString += "mtllib \(baseName).mtl\n"
         objString += "g terrain\n"
 
         for vertex in mesh.vertices {
@@ -34,7 +34,8 @@ final class OBJExporter {
             objString += String(format: "vt %.6f 0.0\n", normalizedElevation)
         }
 
-        for (_, triangle) in mesh.triangles.enumerated() {
+        objString += "usemtl elevation\n"
+        for triangle in mesh.triangles {
             let v1 = triangle.i0 + 1
             let v2 = triangle.i1 + 1
             let v3 = triangle.i2 + 1
@@ -42,13 +43,7 @@ final class OBJExporter {
             objString += "f \(v1)/\(v1)/\(v1) \(v2)/\(v2)/\(v2) \(v3)/\(v3)/\(v3)\n"
         }
 
-        let mtlString = """
-        newmtl elevation
-        Ka 0.2 0.2 0.2
-        Kd 0.8 0.8 0.8
-        Ks 0.1 0.1 0.1
-        Ns 10.0
-        """
+        let mtlString = "newmtl elevation\nKa 0.2 0.2 0.2\nKd 0.8 0.8 0.8\nKs 0.1 0.1 0.1\nNs 10.0\n"
 
         guard let objData = objString.data(using: .utf8),
               let mtlData = mtlString.data(using: .utf8) else {

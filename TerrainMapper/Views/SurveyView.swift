@@ -147,10 +147,10 @@ struct SurveyView: View {
             }
         }
         .mapStyle(.imagery(elevation: .realistic))
-        .mapControls {
-            MapCompass()
-            MapUserLocationButton()
-        }
+        // Hide MapKit's built-in controls — they sit behind the Dynamic
+        // Island when the map extends behind the status bar. We provide
+        // our own buttons in mapOverlayControls instead.
+        .mapControls { }
     }
 
     private func mapControlButton(systemImage: String, action: @escaping () -> Void) -> some View {
@@ -168,6 +168,12 @@ struct SurveyView: View {
     private var mapOverlayControls: some View {
         VStack {
             HStack(spacing: 8) {
+                // Custom location button (replaces MapKit's built-in one
+                // which overlapped the Dynamic Island).
+                mapControlButton(systemImage: "location.fill") {
+                    cameraPosition = .userLocation(fallback: .automatic)
+                }
+
                 Spacer()
                 if sessionStarted && !capturedPoints.isEmpty {
                     mapControlButton(systemImage: "arrow.uturn.backward") {
@@ -195,7 +201,7 @@ struct SurveyView: View {
                     }
                 }
             }
-            .padding(.top, statusBarHeight + 8)
+            .padding(.top, statusBarHeight + 12)
             .padding(.horizontal, 16)
             Spacer()
         }

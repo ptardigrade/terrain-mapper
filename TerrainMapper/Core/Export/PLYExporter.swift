@@ -41,20 +41,9 @@ final class PLYExporter {
     }
 
     private func buildHeader(vertexCount: Int, faceCount: Int) -> String {
-        """
-        ply
-        format ascii 1.0
-        element vertex \(vertexCount)
-        property float x
-        property float y
-        property float z
-        property uchar red
-        property uchar green
-        property uchar blue
-        element face \(faceCount)
-        property list uchar int vertex_index
-        end_header
-        """
+        // The trailing \n after end_header is critical — without it the first
+        // vertex line gets concatenated to end_header and parsers reject the file.
+        return "ply\nformat ascii 1.0\nelement vertex \(vertexCount)\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face \(faceCount)\nproperty list uchar int vertex_index\nend_header\n"
     }
 
     private func viridisColor(value: Double) -> (red: Double, green: Double, blue: Double) {

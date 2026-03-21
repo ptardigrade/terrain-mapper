@@ -379,6 +379,11 @@ struct TerrainSceneView: UIViewRepresentable {
         let elevRange = max(1, mesh.elevationMax - mesh.elevationMin)
         let camDist   = max(elevRange * 3, horizontalExtent * 2)
 
+        // Centre elevation — subtract this from all Z values so the mesh is
+        // centred near the SceneKit origin.  Without this, a survey at 1400 m
+        // elevation would place the mesh 1400 units above the camera target.
+        let elevMid = (mesh.elevationMin + mesh.elevationMax) / 2.0
+
         // Build SCNGeometry from TerrainMesh
         var positions: [SCNVector3] = []
         var normals:   [SCNVector3] = []
@@ -386,7 +391,9 @@ struct TerrainSceneView: UIViewRepresentable {
         var indices:   [Int32] = []
 
         for v in mesh.vertices {
-            positions.append(SCNVector3(Float(v.x), Float(v.z), Float(-v.y)))  // Y-up in SceneKit
+            // Y-up in SceneKit:  X = east, Y = elevation (centred), Z = -north
+            let centeredElev = v.z - elevMid
+            positions.append(SCNVector3(Float(v.x), Float(centeredElev), Float(-v.y)))
             normals.append(SCNVector3(Float(v.nx), Float(v.nz), Float(-v.ny)))
             let frac  = Float((v.elevation - mesh.elevationMin) / elevRange)
             let color = viridisColor(frac)
@@ -400,7 +407,8 @@ struct TerrainSceneView: UIViewRepresentable {
 
         let posSource    = SCNGeometrySource(vertices: positions)
         let normSource   = SCNGeometrySource(normals: normals)
-        let colorData    = Data(bytes: &colors, count: colors.count * MemoryLayout<SIMD4<Float>>.size)
+        var colorsCopy   = colors
+        let colorData    = Data(bytes: &colorsCopy, count: colorsCopy.count * MemoryLayout<SIMD4<Float>>.size)
         let colorSource  = SCNGeometrySource(
             data: colorData, semantic: .color,
             vectorCount: colors.count, usesFloatComponents: true,
@@ -425,14 +433,23 @@ struct TerrainSceneView: UIViewRepresentable {
         let node = SCNNode(geometry: geometry)
         scene.rootNode.addChildNode(node)
 
-        // Camera positioned above and slightly to the side
+        // Camera positioned above and slightly to the side, looking at the mesh centre
         let cam = SCNCamera()
         cam.fieldOfView = 60
+        cam.automaticallyAdjustsZRange = true
         let camNode = SCNNode()
         camNode.camera = cam
         camNode.position = SCNVector3(0, Float(camDist), Float(camDist * 0.6))
         camNode.look(at: SCNVector3(0, 0, 0))
         scene.rootNode.addChildNode(camNode)
+
+        // Ambient light so mesh isn't in shadow
+        let ambientLight = SCNLight()
+        ambientLight.type = .ambient
+        ambientLight.color = UIColor(white: 0.4, alpha: 1.0)
+        let ambientNode = SCNNode()
+        ambientNode.light = ambientLight
+        scene.rootNode.addChildNode(ambientNode)
 
         return scene
     }

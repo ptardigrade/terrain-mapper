@@ -385,12 +385,15 @@ private struct InfoButton: View {
         .popover(isPresented: $show) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title).font(.headline)
-                Text(message)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    Text(message)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding()
-            .frame(maxWidth: 280)
+            .frame(maxWidth: 300, maxHeight: 320)
+            .background(Theme.surfaceContainerHigh)
             .presentationCompactAdaptation(.popover)
         }
     }

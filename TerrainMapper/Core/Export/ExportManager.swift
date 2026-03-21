@@ -93,47 +93,60 @@ final class ExportManager: ObservableObject {
         return exportURL
     }
 
+    /// Sanitise a session name for use in filenames (remove filesystem-unsafe characters).
+    private nonisolated static func safeFileName(from sessionName: String) -> String {
+        let trimmed = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "terrain" }
+        // Replace characters that are unsafe in filenames
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " _-"))
+        let safe = trimmed.unicodeScalars.map { allowed.contains($0) ? String($0) : "_" }.joined()
+        // Collapse multiple underscores and trim
+        let collapsed = safe.replacingOccurrences(of: "_{2,}", with: "_", options: .regularExpression)
+        return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_ "))
+    }
+
     /// Static variant — callable from a `Task.detached` without actor context.
     @discardableResult
     private nonisolated static func exportFormatStatic(_ format: ExportFormat, terrain: ProcessedTerrain, to folder: URL) throws -> URL {
+        let baseName = safeFileName(from: terrain.session.name)
         let fileName: String
         let data: Data
 
         switch format {
         case .ply:
-            fileName = "terrain.ply"
+            fileName = "\(baseName).ply"
             let exporter = PLYExporter()
             data = try exporter.export(terrain: terrain)
 
         case .las:
-            fileName = "terrain.las"
+            fileName = "\(baseName).las"
             let exporter = LASExporter()
             data = try exporter.export(terrain: terrain)
 
         case .geoJSON:
-            fileName = "terrain.geojson"
+            fileName = "\(baseName).geojson"
             let exporter = GeoJSONExporter()
             data = try exporter.export(terrain: terrain)
 
         case .geoTIFF:
-            fileName = "elevation.tif"
+            fileName = "\(baseName).tif"
             let exporter = GeoTIFFExporter()
             data = try exporter.export(terrain: terrain)
 
         case .obj:
             let exporter = OBJExporter()
-            let (objData, mtlData) = try exporter.export(terrain: terrain)
+            let (objData, mtlData) = try exporter.export(terrain: terrain, baseName: baseName)
 
-            let objURL = folder.appendingPathComponent("terrain.obj")
+            let objURL = folder.appendingPathComponent("\(baseName).obj")
             try objData.write(to: objURL)
 
-            let mtlURL = folder.appendingPathComponent("terrain.mtl")
+            let mtlURL = folder.appendingPathComponent("\(baseName).mtl")
             try mtlData.write(to: mtlURL)
 
             return objURL
 
         case .csv:
-            fileName = "survey_points.csv"
+            fileName = "\(baseName).csv"
             let exporter = CSVExporter()
             data = try exporter.export(terrain: terrain)
         }
