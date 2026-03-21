@@ -41,9 +41,24 @@ final class PLYExporter {
     }
 
     private func buildHeader(vertexCount: Int, faceCount: Int) -> String {
-        // The trailing \n after end_header is critical — without it the first
-        // vertex line gets concatenated to end_header and parsers reject the file.
-        return "ply\nformat ascii 1.0\nelement vertex \(vertexCount)\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face \(faceCount)\nproperty list uchar int vertex_index\nend_header\n"
+        // Notes:
+        // - Trailing \n after end_header is critical (parsers reject without it).
+        // - `vertex_indices` (plural) is more widely supported than `vertex_index`.
+        // - comment line helps identify the source.
+        var h = "ply\n"
+        h += "format ascii 1.0\n"
+        h += "comment TerrainMapper export\n"
+        h += "element vertex \(vertexCount)\n"
+        h += "property float x\n"
+        h += "property float y\n"
+        h += "property float z\n"
+        h += "property uchar red\n"
+        h += "property uchar green\n"
+        h += "property uchar blue\n"
+        h += "element face \(faceCount)\n"
+        h += "property list uchar int vertex_indices\n"
+        h += "end_header\n"
+        return h
     }
 
     private func viridisColor(value: Double) -> (red: Double, green: Double, blue: Double) {

@@ -134,16 +134,9 @@ final class ExportManager: ObservableObject {
             data = try exporter.export(terrain: terrain)
 
         case .obj:
+            fileName = "\(baseName).obj"
             let exporter = OBJExporter()
-            let (objData, mtlData) = try exporter.export(terrain: terrain, baseName: baseName)
-
-            let objURL = folder.appendingPathComponent("\(baseName).obj")
-            try objData.write(to: objURL)
-
-            let mtlURL = folder.appendingPathComponent("\(baseName).mtl")
-            try mtlData.write(to: mtlURL)
-
-            return objURL
+            data = try exporter.export(terrain: terrain)
 
         case .csv:
             fileName = "\(baseName).csv"

@@ -382,19 +382,28 @@ private struct InfoButton: View {
                 .foregroundStyle(Theme.primary)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $show) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(.headline)
+        .sheet(isPresented: $show) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(title).font(.headline)
+                    Spacer()
+                    Button { show = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
+                    }
+                }
                 ScrollView {
                     Text(message)
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding()
-            .frame(maxWidth: 300, maxHeight: 320)
+            .padding(20)
             .background(Theme.surfaceContainerHigh)
-            .presentationCompactAdaptation(.popover)
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
     }
 }
