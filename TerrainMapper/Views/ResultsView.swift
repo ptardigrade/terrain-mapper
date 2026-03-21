@@ -401,7 +401,7 @@ final class ContourZoomableView: UIScrollView, UIScrollViewDelegate {
 
 /// Core Graphics view that draws contour lines.  Lives inside a UIScrollView
 /// so that pinch-to-zoom and pan are handled by UIKit gesture recognizers.
-private final class ContourContentView: UIView {
+final class ContourContentView: UIView {
     var contours: [ContourLine] = []
 
     override init(frame: CGRect) {
