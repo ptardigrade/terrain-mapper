@@ -5,13 +5,14 @@
 // completed SurveySession and produces a ProcessedTerrain.
 //
 // Pipeline stages (in order):
-//  1. Outlier detection          (OutlierDetector)
-//  2. Loop-closure correction    (LoopClosureProcessor)
-//  3. PDR position refinement    (GPSManager)
-//  4. Geoid correction           (GeoidCorrector)
-//  5. IDW / kriging interpolation → TerrainGrid   (TerrainInterpolator)
-//  6. Delaunay triangulation     → TerrainMesh    (MeshGenerator)
-//  7. Marching squares contours  → [ContourLine]  (ContourGenerator)
+//  1. Outlier detection              (OutlierDetector)
+//  2. Differential elevation correct (DifferentialElevationCorrector)
+//  3. Loop-closure correction        (LoopClosureProcessor)
+//  4. PDR position refinement        (GPSManager)
+//  5. Geoid correction               (GeoidCorrector)
+//  6. IDW / kriging interpolation    → TerrainGrid   (TerrainInterpolator)
+//  7. Delaunay triangulation         → TerrainMesh   (MeshGenerator)
+//  8. Marching squares contours      → [ContourLine]  (ContourGenerator)
 //
 // All stages are awaited on a background Task to avoid blocking the main thread.
 
@@ -105,6 +106,7 @@ final class ProcessingPipeline: ObservableObject {
         updateProgress:       (String) -> Void
     ) -> ProcessedTerrain {
         var points = session.points
+        var pathPoints = session.pathTrackPoints
 
         // ── 1. Outlier detection ──────────────────────────────────────────
         updateProgress("Detecting outliers…")
@@ -114,7 +116,21 @@ final class ProcessingPipeline: ObservableObject {
 
         let outlierCount = points.filter(\.isOutlier).count
 
-        // ── 2. Loop-closure correction ────────────────────────────────────
+        // ── 2. Differential elevation correction ─────────────────────────
+        // Recompute ground elevations using baro+LiDAR differential method
+        // instead of per-point Kalman-fused altitudes.  This reduces elevation
+        // noise from ±5 m (GPS-dominated) to ±0.12 m (baro+LiDAR).
+        updateProgress("Applying differential elevation…")
+        let originalPoints = points  // snapshot for path-track offset calc
+        let diffCorrector = DifferentialElevationCorrector()
+        diffCorrector.correct(points: &points)
+        diffCorrector.correctPathTrack(
+            pathPoints: &pathPoints,
+            correctedCaptures: points,
+            originalCaptures: originalPoints
+        )
+
+        // ── 3. Loop-closure correction ────────────────────────────────────
         updateProgress("Checking for loop closure…")
         var lcProc = LoopClosureProcessor()
         let loopClosed = lcProc.applyLoopClosure(to: &points)
@@ -161,7 +177,7 @@ final class ProcessingPipeline: ObservableObject {
         interp.gridResolutionMeters = gridResolution
         let grid = interp.interpolate(
             points:     validPoints,
-            pathPoints: session.pathTrackPoints,
+            pathPoints: pathPoints,
             method:     interpolationMethod
         )
 

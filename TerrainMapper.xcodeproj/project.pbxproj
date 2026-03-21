@@ -31,6 +31,7 @@
 		BB0000020000000000000006 /* MeshGenerator.swift in Sources */        = {isa = PBXBuildFile; fileRef = BB0000010000000000000006; };
 		BB0000020000000000000007 /* ContourGenerator.swift in Sources */     = {isa = PBXBuildFile; fileRef = BB0000010000000000000007; };
 		BB0000020000000000000008 /* ProcessingPipeline.swift in Sources */   = {isa = PBXBuildFile; fileRef = BB0000010000000000000008; };
+		BB0000020000000000000009 /* DifferentialElevationCorrector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000009; };
 		/* ── Phase 3: Views ──────────────────────────────────────────── */
 		CC0000020000000000000001 /* AppSettings.swift in Sources */          = {isa = PBXBuildFile; fileRef = CC0000010000000000000001; };
 		CC0000020000000000000002 /* TiltMeterView.swift in Sources */        = {isa = PBXBuildFile; fileRef = CC0000010000000000000002; };
@@ -85,6 +86,7 @@
 		BB0000010000000000000006 /* MeshGenerator.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshGenerator.swift; sourceTree = "<group>"; };
 		BB0000010000000000000007 /* ContourGenerator.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContourGenerator.swift; sourceTree = "<group>"; };
 		BB0000010000000000000008 /* ProcessingPipeline.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingPipeline.swift; sourceTree = "<group>"; };
+		BB0000010000000000000009 /* DifferentialElevationCorrector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DifferentialElevationCorrector.swift; sourceTree = "<group>"; };
 		/* Phase 3: Views */
 		CC0000010000000000000001 /* AppSettings.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		CC0000010000000000000002 /* TiltMeterView.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiltMeterView.swift; sourceTree = "<group>"; };
@@ -209,6 +211,7 @@
 				BB0000010000000000000006 /* MeshGenerator.swift */,
 				BB0000010000000000000007 /* ContourGenerator.swift */,
 				BB0000010000000000000008 /* ProcessingPipeline.swift */,
+				BB0000010000000000000009 /* DifferentialElevationCorrector.swift */,
 			);
 			path = Processing;
 			sourceTree = "<group>";
@@ -350,6 +353,7 @@
 				BB0000020000000000000006 /* MeshGenerator.swift in Sources */,
 				BB0000020000000000000007 /* ContourGenerator.swift in Sources */,
 				BB0000020000000000000008 /* ProcessingPipeline.swift in Sources */,
+				BB0000020000000000000009 /* DifferentialElevationCorrector.swift in Sources */,
 				/* Phase 3 */
 				CC0000020000000000000001 /* AppSettings.swift in Sources */,
 				CC0000020000000000000002 /* TiltMeterView.swift in Sources */,

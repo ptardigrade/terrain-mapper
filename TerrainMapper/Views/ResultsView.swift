@@ -339,45 +339,63 @@ private struct StatCard: View {
 /// Uses native UIKit gesture recognizers so pinch/pan are consumed at the UIKit
 /// level — they never reach SwiftUI's sheet dismiss gesture.  This is the same
 /// reason Map and SCNView work inside sheets without conflict.
+///
+/// Layout strategy:  A custom UIScrollView subclass (`ContourZoomableView`)
+/// overrides `layoutSubviews()` to size the content view to match the scroll
+/// view's visible bounds.  This avoids the race condition where `updateUIView`
+/// fires before the scroll view has non-zero bounds — the primary cause of the
+/// "blank contour tab" bug.
 struct ContourScrollView: UIViewRepresentable {
     let contours: [ContourLine]
 
-    func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
-        scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = 0.5
-        scrollView.maximumZoomScale = 10.0
-        scrollView.bouncesZoom = true
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.showsVerticalScrollIndicator = false
-        scrollView.backgroundColor = UIColor(red: 0.07, green: 0.09, blue: 0.07, alpha: 1.0)
-
-        let contentView = ContourContentView()
-        contentView.contours = contours
-        contentView.tag = 999
-        scrollView.addSubview(contentView)
-
-        return scrollView
+    func makeUIView(context: Context) -> ContourZoomableView {
+        let zoomView = ContourZoomableView()
+        zoomView.contentDrawView.contours = contours
+        return zoomView
     }
 
-    func updateUIView(_ scrollView: UIScrollView, context: Context) {
-        guard let contentView = scrollView.viewWithTag(999) as? ContourContentView else { return }
-        contentView.contours = contours
+    func updateUIView(_ zoomView: ContourZoomableView, context: Context) {
+        zoomView.contentDrawView.contours = contours
+        zoomView.contentDrawView.setNeedsDisplay()
+    }
+}
 
-        let size = scrollView.bounds.size
+/// Custom UIScrollView that owns its ContourContentView and sizes it in
+/// `layoutSubviews`.  Because this is a UIKit scroll view, its built-in
+/// pinch/pan gesture recognizers consume touches at the UIKit level and
+/// never propagate to SwiftUI's sheet-dismiss recogniser.
+final class ContourZoomableView: UIScrollView, UIScrollViewDelegate {
+    let contentDrawView = ContourContentView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        delegate = self
+        minimumZoomScale = 0.5
+        maximumZoomScale = 10.0
+        bouncesZoom = true
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        backgroundColor = UIColor(red: 0.07, green: 0.09, blue: 0.07, alpha: 1.0)
+        addSubview(contentDrawView)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = bounds.size
         guard size.width > 0, size.height > 0 else { return }
-
-        contentView.frame = CGRect(origin: .zero, size: size)
-        scrollView.contentSize = size
-        contentView.setNeedsDisplay()
+        // Only resize when bounds actually change (avoids infinite layout loops).
+        if contentDrawView.bounds.size != size {
+            contentDrawView.frame = CGRect(origin: .zero, size: size)
+            contentSize = size
+            contentDrawView.setNeedsDisplay()
+        }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator: NSObject, UIScrollViewDelegate {
-        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-            scrollView.viewWithTag(999)
-        }
+    // UIScrollViewDelegate
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        contentDrawView
     }
 }
 
