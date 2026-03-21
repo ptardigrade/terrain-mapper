@@ -18,6 +18,7 @@ jobs:
 
       - name: Build (unsigned)
         run: |
+          set -o pipefail
           xcodebuild \
             -project TerrainMapper.xcodeproj \
             -scheme TerrainMapper \
