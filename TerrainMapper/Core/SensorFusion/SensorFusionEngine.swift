@@ -258,8 +258,11 @@ final class SensorFusionEngine: ObservableObject {
         let pointID = UUID()
 
         // Store ARKit position keyed by UUID so the pipeline can look it up.
+        // Format: [x, z, y_ground] — pipeline uses [0]=x and [1]=z (unchanged);
+        // ARSurveyView uses [2]=y_ground to place 3-D dot anchors.
         if let pos = arkitPos {
-            arkitPositions[pointID.uuidString] = [Double(pos.x), Double(pos.z)]
+            let groundY = Double(pos.y) - lidarDistance
+            arkitPositions[pointID.uuidString] = [Double(pos.x), Double(pos.z), groundY]
         }
 
         let point = SurveyPoint(

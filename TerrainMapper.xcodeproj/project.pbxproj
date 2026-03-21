@@ -36,6 +36,7 @@
 		CC0000020000000000000001 /* AppSettings.swift in Sources */          = {isa = PBXBuildFile; fileRef = CC0000010000000000000001; };
 		CC0000020000000000000002 /* TiltMeterView.swift in Sources */        = {isa = PBXBuildFile; fileRef = CC0000010000000000000002; };
 		CC0000020000000000000003 /* SurveyView.swift in Sources */           = {isa = PBXBuildFile; fileRef = CC0000010000000000000003; };
+		CC0000020000000000000006 /* ARSurveyView.swift in Sources */         = {isa = PBXBuildFile; fileRef = CC0000010000000000000006; };
 		CC0000020000000000000004 /* ResultsView.swift in Sources */          = {isa = PBXBuildFile; fileRef = CC0000010000000000000004; };
 		CC0000020000000000000005 /* SettingsView.swift in Sources */         = {isa = PBXBuildFile; fileRef = CC0000010000000000000005; };
 		/* ── Phase 4: Export ─────────────────────────────────────────── */
@@ -91,6 +92,7 @@
 		CC0000010000000000000001 /* AppSettings.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		CC0000010000000000000002 /* TiltMeterView.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiltMeterView.swift; sourceTree = "<group>"; };
 		CC0000010000000000000003 /* SurveyView.swift */            = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyView.swift; sourceTree = "<group>"; };
+		CC0000010000000000000006 /* ARSurveyView.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARSurveyView.swift; sourceTree = "<group>"; };
 		CC0000010000000000000004 /* ResultsView.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
 		CC0000010000000000000005 /* SettingsView.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		/* Phase 4: Export */
@@ -241,6 +243,7 @@
 				CC0000010000000000000001 /* AppSettings.swift */,
 				CC0000010000000000000002 /* TiltMeterView.swift */,
 				CC0000010000000000000003 /* SurveyView.swift */,
+				CC0000010000000000000006 /* ARSurveyView.swift */,
 				CC0000010000000000000004 /* ResultsView.swift */,
 				CC0000010000000000000005 /* SettingsView.swift */,
 				FF000002000000000000002B /* SessionHistoryView.swift */,
@@ -358,6 +361,7 @@
 				CC0000020000000000000001 /* AppSettings.swift in Sources */,
 				CC0000020000000000000002 /* TiltMeterView.swift in Sources */,
 				CC0000020000000000000003 /* SurveyView.swift in Sources */,
+				CC0000020000000000000006 /* ARSurveyView.swift in Sources */,
 				CC0000020000000000000004 /* ResultsView.swift in Sources */,
 				CC0000020000000000000005 /* SettingsView.swift in Sources */,
 				/* Phase 4 */

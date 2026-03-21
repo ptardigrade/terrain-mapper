@@ -70,7 +70,8 @@ final class LiDARManager: NSObject, ObservableObject {
 
     // MARK: - Private
 
-    private var arSession: ARSession?
+    /// Published so ARSurveyView can react when the session becomes available.
+    @Published private(set) var arSession: ARSession?
 
     /// True after the first captureGroundDistance() call initialises the session.
     /// Subsequent calls reuse the running session so ARKit VIO tracking is
@@ -100,6 +101,21 @@ final class LiDARManager: NSObject, ObservableObject {
     }
 
     // MARK: - Public API
+
+    /// Starts the AR session immediately so the camera feed is visible before
+    /// the first capture.  Safe to call multiple times — no-op if already running.
+    func startPreviewSession() {
+        guard !isSessionRunning,
+              ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else { return }
+        let config = ARWorldTrackingConfiguration()
+        config.frameSemantics = .sceneDepth
+        if arSession == nil {
+            arSession = ARSession()
+            arSession?.delegate = self
+        }
+        arSession?.run(config, options: [.resetTracking, .removeExistingAnchors])
+        isSessionRunning = true
+    }
 
     /// Captures a tilt-corrected vertical distance to the ground.
     ///

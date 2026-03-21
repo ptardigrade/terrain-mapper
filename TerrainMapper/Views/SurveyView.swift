@@ -1,15 +1,16 @@
 // SurveyView.swift
 // TerrainMapper
 //
-// Live survey screen — "Digital Theodolite" layout.
-// Full-bleed satellite map; floating glassmorphism header and bottom panel.
+// Live survey screen — AR camera feed with floating glassmorphism panel.
 //
 // Layout (no NavigationStack):
 //   ┌──────────────────────────────────────┐
-//   │  ◈ TERRAIN MAPPER   [undo][fit][End] │  ← floating topBar
+//   │  [undo]               [End]          │  ← floating top controls
 //   │                                      │
-//   │    Full-bleed MKMapView              │
-//   │    (extends behind status bar)       │
+//   │    Full-bleed ARSCNView              │
+//   │    (live camera + AR overlays)       │
+//   │    • White dot + elevation per point │
+//   │    • Pulsing green beacon at target  │
 //   │                                      │
 //   │  ┌────────────────────────────────┐  │
 //   │  │ TILT  GPS ACC  MOTION    ALT   │  │  ← glassmorphism panel
@@ -19,7 +20,6 @@
 //   └──────────────────────────────────────┘
 
 import SwiftUI
-import MapKit
 import CoreLocation
 
 struct SurveyView: View {
@@ -36,18 +36,16 @@ struct SurveyView: View {
 
     // MARK: - State
 
-    @State private var capturedPoints:        [SurveyPoint] = []
-    @State private var pathTrackCoordinates:  [CLLocationCoordinate2D] = []
-    @State private var cameraPosition:        MapCameraPosition = .automatic
-    @State private var isCapturing:           Bool = false
-    @State private var captureError:          String?
-    @State private var showError:             Bool = false
-    @State private var elapsedSeconds:        Int = 0
-    @State private var sessionStarted:        Bool = false
+    @State private var capturedPoints:         [SurveyPoint] = []
+    @State private var isCapturing:            Bool = false
+    @State private var captureError:           String?
+    @State private var showError:              Bool = false
+    @State private var elapsedSeconds:         Int = 0
+    @State private var sessionStarted:         Bool = false
     @State private var showLiDARFallbackAlert: Bool = false
-    @State private var showEndWarning:        Bool = false
-    @State private var sessionName:           String = ""
-    @State private var showNameSheet:         Bool   = false
+    @State private var showEndWarning:         Bool = false
+    @State private var sessionName:            String = ""
+    @State private var showNameSheet:          Bool   = false
 
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
@@ -57,34 +55,30 @@ struct SurveyView: View {
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    // MARK: - Body
+    // MARK: - Helpers
 
-    // Height of the status bar / Dynamic Island safe area — used to
-    // position floating controls below the notch without a GeometryReader.
     private var statusBarHeight: CGFloat {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.windows.first?.safeAreaInsets.top ?? 59
     }
 
+    // MARK: - Body
+
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Full-bleed satellite map
-            mapLayer
+            // Full-bleed AR camera view
+            arLayer
 
-            // Floating map controls — End / Undo / Fit (top-right, below status bar)
-            mapOverlayControls
+            // Floating controls — Undo / End (top, below status bar)
+            arOverlayControls
 
-            // Bottom survey panel (sits above tab bar)
+            // Bottom survey panel
             surveyPanel
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
         }
-        // Extend only the TOP edge behind the status bar so the map fills
-        // the full width. The bottom edge stays constrained by the TabView
-        // so the panel doesn't slide behind the tab bar.
         .ignoresSafeArea(.all, edges: .top)
-        // Toast notification floats above the top bar
         .overlay(alignment: .top) {
             Group {
                 if let elev = captureToastElevation {
@@ -95,11 +89,13 @@ struct SurveyView: View {
             }
             .animation(.spring(duration: 0.35), value: captureToastElevation != nil)
         }
+        .onAppear {
+            // Start the AR camera feed immediately so the user sees live video
+            // before pressing Start Survey.
+            engine.lidarManager.startPreviewSession()
+        }
         .onReceive(timer) { _ in
             if sessionStarted { elapsedSeconds += 1 }
-        }
-        .onReceive(engine.$latestPathTrackPoint.compactMap { $0 }) { point in
-            pathTrackCoordinates.append(point.clCoordinate)
         }
         .alert("Capture Error", isPresented: $showError, presenting: captureError) { _ in
             Button("OK", role: .cancel) {}
@@ -123,37 +119,22 @@ struct SurveyView: View {
         }
     }
 
-    // MARK: - Map layer
+    // MARK: - AR layer
 
-    private var mapLayer: some View {
-        Map(position: $cameraPosition) {
-            ForEach(capturedPoints) { point in
-                Annotation("", coordinate: point.clCoordinate) {
-                    SurveyPointMarker(
-                        elevation: point.groundElevation,
-                        elevMin:   elevMin,
-                        elevMax:   elevMax,
-                        isOutlier: point.isOutlier
-                    )
-                }
-            }
-            if capturedPoints.count >= 2 {
-                MapPolyline(coordinates: capturedPoints.map(\.clCoordinate))
-                    .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [4, 4]))
-            }
-            if pathTrackCoordinates.count >= 2 {
-                MapPolyline(coordinates: pathTrackCoordinates)
-                    .stroke(Theme.primary.opacity(0.45), style: StrokeStyle(lineWidth: 1.5))
-            }
-        }
-        .mapStyle(.imagery(elevation: .realistic))
-        // Hide MapKit's built-in controls — they sit behind the Dynamic
-        // Island when the map extends behind the status bar. We provide
-        // our own buttons in mapOverlayControls instead.
-        .mapControls { }
+    private var arLayer: some View {
+        ARSurveyView(
+            lidarManager:   engine.lidarManager,
+            capturedPoints: capturedPoints,
+            arkitPositions: engine.currentSessionSnapshot?.arkitPositions ?? [:],
+            elevMin:        elevMin,
+            elevMax:        elevMax
+        )
+        .ignoresSafeArea()
     }
 
-    private func mapControlButton(systemImage: String, action: @escaping () -> Void) -> some View {
+    // MARK: - Floating overlay controls
+
+    private func overlayButton(systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 13, weight: .medium))
@@ -163,31 +144,18 @@ struct SurveyView: View {
         }
     }
 
-    /// Floating controls that sit in the top-right corner of the map,
-    /// manually offset below the status bar / Dynamic Island.
-    private var mapOverlayControls: some View {
+    private var arOverlayControls: some View {
         VStack {
             HStack(spacing: 8) {
-                // Custom location button (replaces MapKit's built-in one
-                // which overlapped the Dynamic Island).
-                mapControlButton(systemImage: "location.fill") {
-                    cameraPosition = .userLocation(fallback: .automatic)
-                }
-
                 Spacer()
                 if sessionStarted && !capturedPoints.isEmpty {
-                    mapControlButton(systemImage: "arrow.uturn.backward") {
+                    overlayButton(systemImage: "arrow.uturn.backward") {
                         if let removed = engine.undoLastPoint() {
                             capturedPoints.removeAll { $0.id == removed.id }
                             let all = capturedPoints.map(\.groundElevation)
                             elevMin = all.min() ?? 0
                             elevMax = max(elevMin + 0.01, all.max() ?? 1)
                         }
-                    }
-                }
-                if capturedPoints.count >= 2 {
-                    mapControlButton(systemImage: "arrow.up.left.and.arrow.down.right") {
-                        fitMapToPoints()
                     }
                 }
                 if sessionStarted {
@@ -310,11 +278,9 @@ struct SurveyView: View {
             .frame(width: 0.5, height: 52)
     }
 
-    /// Compact spirit-level bubble — inline replacement for TiltMeterView
-    /// in the dense sensor panel.
+    /// Compact spirit-level bubble — inline replacement for TiltMeterView.
     private var compactTiltBubble: some View {
         ZStack {
-            // Stationary progress arc
             Circle()
                 .trim(from: 0, to: CGFloat(engine.stationaryProgress))
                 .stroke(
@@ -324,18 +290,15 @@ struct SurveyView: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.1), value: engine.stationaryProgress)
 
-            // Outer ring
             Circle()
                 .strokeBorder(tiltRingColor, lineWidth: 1.5)
 
-            // Crosshair
             Path { p in
                 p.move(to: CGPoint(x: 18, y: 12)); p.addLine(to: CGPoint(x: 18, y: 24))
                 p.move(to: CGPoint(x: 12, y: 18)); p.addLine(to: CGPoint(x: 24, y: 18))
             }
             .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
 
-            // Bubble
             let off = tiltBubbleOffset
             Circle()
                 .fill(tiltBubbleColor)
@@ -381,9 +344,6 @@ struct SurveyView: View {
                 Task { await capturePoint() }
             }
         }) {
-            // ⚠️ Do NOT use ZStack here — RoundedRectangle is a greedy view that
-            // expands to fill all available space, making the button enormous.
-            // Use .background() so height is driven by content + padding only.
             HStack(spacing: 10) {
                 if !sessionStarted {
                     Image(systemName: "play.circle.fill").font(.title3)
@@ -421,8 +381,6 @@ struct SurveyView: View {
     @ViewBuilder
     private var captureButtonBackground: some View {
         if !sessionStarted {
-            // Green gradient — the start button should look as actionable as
-            // the capture button, not muted/disabled.
             RoundedRectangle(cornerRadius: 14).fill(Theme.primaryGradient)
         } else if isCapturing {
             RoundedRectangle(cornerRadius: 14).fill(Theme.primary.opacity(0.75))
@@ -566,8 +524,7 @@ struct SurveyView: View {
     // MARK: - Actions
 
     private func startSession() {
-        capturedPoints       = []
-        pathTrackCoordinates = []
+        capturedPoints = []
         elapsedSeconds = 0
         elevMin = 0; elevMax = 1
         engine.startSession(stickHeight: settings.stickHeight, name: sessionName)
@@ -586,24 +543,6 @@ struct SurveyView: View {
             showEndWarning = true
         } else {
             endSession()
-        }
-    }
-
-    private func fitMapToPoints() {
-        guard !capturedPoints.isEmpty else { return }
-        let lats = capturedPoints.map(\.latitude)
-        let lons = capturedPoints.map(\.longitude)
-        let minLat = lats.min()!, maxLat = lats.max()!
-        let minLon = lons.min()!, maxLon = lons.max()!
-        let centerLat = (minLat + maxLat) / 2
-        let centerLon = (minLon + maxLon) / 2
-        let spanLat = max(0.001, (maxLat - minLat) * 1.5)
-        let spanLon = max(0.001, (maxLon - minLon) * 1.5)
-        withAnimation {
-            cameraPosition = .region(MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
-                span:   MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
-            ))
         }
     }
 
@@ -628,13 +567,6 @@ struct SurveyView: View {
             elevMin = all.min() ?? 0
             elevMax = max(elevMin + 0.01, all.max() ?? 1)
 
-            let coord = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
-            withAnimation {
-                cameraPosition = .region(MKCoordinateRegion(
-                    center: coord,
-                    latitudinalMeters: 100, longitudinalMeters: 100
-                ))
-            }
         } catch SensorFusionError.lidarCaptureFailed(let inner) {
             if case LiDARError.depthDataUnavailable = inner {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -661,7 +593,7 @@ struct SurveyView: View {
             showError = true
             return
         }
-        let fusedAlt  = engine.currentAltitude
+        let fusedAlt   = engine.currentAltitude
         let groundElev = fusedAlt - settings.stickHeight
         let point = SurveyPoint(
             id:                  UUID(),
@@ -689,41 +621,5 @@ struct SurveyView: View {
         let all = capturedPoints.map(\.groundElevation)
         elevMin = all.min() ?? 0
         elevMax = max(elevMin + 0.01, all.max() ?? 1)
-        let coord = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
-        withAnimation {
-            cameraPosition = .region(MKCoordinateRegion(
-                center: coord, latitudinalMeters: 100, longitudinalMeters: 100
-            ))
-        }
-    }
-}
-
-// MARK: - Survey point marker
-
-private struct SurveyPointMarker: View {
-    let elevation: Double
-    let elevMin:   Double
-    let elevMax:   Double
-    let isOutlier: Bool
-
-    private var fraction: Double {
-        guard elevMax > elevMin else { return 0.5 }
-        return max(0, min(1, (elevation - elevMin) / (elevMax - elevMin)))
-    }
-
-    private var markerColor: Color {
-        if isOutlier { return .orange.opacity(0.5) }
-        if fraction < 0.5 {
-            return Color(hue: 0.67 - fraction * 0.67, saturation: 0.8, brightness: 0.9)
-        } else {
-            return Color(hue: 0.33 - (fraction - 0.5) * 0.33, saturation: 0.9, brightness: 0.9)
-        }
-    }
-
-    var body: some View {
-        Circle()
-            .fill(markerColor)
-            .frame(width: 12, height: 12)
-            .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 1))
     }
 }
