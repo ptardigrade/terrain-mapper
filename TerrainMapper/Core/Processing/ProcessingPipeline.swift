@@ -8,11 +8,12 @@
 //  1. Outlier detection              (OutlierDetector)
 //  2. Differential elevation correct (DifferentialElevationCorrector)
 //  3. Loop-closure correction        (LoopClosureProcessor)
-//  4. PDR position refinement        (GPSManager)
-//  5. Geoid correction               (GeoidCorrector)
-//  6. IDW / kriging interpolation    → TerrainGrid   (TerrainInterpolator)
-//  7. Delaunay triangulation         → TerrainMesh   (MeshGenerator)
-//  8. Marching squares contours      → [ContourLine]  (ContourGenerator)
+//  4. ARKit VIO position refinement  (arkitRefinePositions)
+//  5. PDR position refinement        (GPSManager, fallback when no ARKit data)
+//  6. Geoid correction               (GeoidCorrector)
+//  7. IDW / kriging interpolation    → TerrainGrid   (TerrainInterpolator)
+//  8. Delaunay triangulation         → TerrainMesh   (MeshGenerator)
+//  9. Marching squares contours      → [ContourLine]  (ContourGenerator)
 //
 // All stages are awaited on a background Task to avoid blocking the main thread.
 
@@ -68,6 +69,8 @@ final class ProcessingPipeline: ObservableObject {
         let capturedGeoidEnabled        = enableGeoidCorrection
         let capturedMadThreshold        = madThreshold
         let capturedElevationOffset     = elevationOffset
+        let capturedArkitPositions      = session.arkitPositions
+        let capturedArkitHeading        = session.arkitAnchorHeading
 
         // ProgressSender lets the background pipeline post stage messages back to
         // the @MainActor-isolated progressMessage property safely.
@@ -83,6 +86,8 @@ final class ProcessingPipeline: ObservableObject {
                 enableGeoidCorrection: capturedGeoidEnabled,
                 madThreshold:          capturedMadThreshold,
                 elevationOffset:       capturedElevationOffset,
+                arkitPositions:        capturedArkitPositions,
+                arkitAnchorHeading:    capturedArkitHeading,
                 updateProgress:        { msg in sender.send(msg) }
             )
         }.value
@@ -103,6 +108,8 @@ final class ProcessingPipeline: ObservableObject {
         enableGeoidCorrection: Bool,
         madThreshold:         Double,
         elevationOffset:      Double,
+        arkitPositions:       [String: [Double]]?,
+        arkitAnchorHeading:   Double?,
         updateProgress:       (String) -> Void
     ) -> ProcessedTerrain {
         var points = session.points
@@ -135,9 +142,30 @@ final class ProcessingPipeline: ObservableObject {
         var lcProc = LoopClosureProcessor()
         let loopClosed = lcProc.applyLoopClosure(to: &points)
 
-        // ── 3. PDR position refinement ────────────────────────────────────
+        // ── 3a. ARKit VIO position refinement ────────────────────────────
+        // When ARKit world-space positions were recorded during capture, use them
+        // as the primary horizontal positioning source.  GPS accuracy (3–15 m) is
+        // far worse than ARKit VIO accuracy (< 5 cm) for sub-meter surveys.
+        // The ARKit XZ frame is rotated to geographic East/North using the compass
+        // heading recorded at session start, then anchored to the GPS centroid.
+        let hasArkitData: Bool
+        if let ark = arkitPositions, let heading = arkitAnchorHeading, !ark.isEmpty {
+            updateProgress("Refining positions with ARKit VIO…")
+            ProcessingPipeline.arkitRefinePositions(
+                points: &points,
+                arkitPositions: ark,
+                anchorHeadingDeg: heading
+            )
+            hasArkitData = true
+        } else {
+            hasArkitData = false
+        }
+
+        // ── 3b. PDR position refinement (fallback when no ARKit data) ─────
         updateProgress("Smoothing survey path…")
-        ProcessingPipeline.pdrRefineStatic(points: &points)
+        if !hasArkitData {
+            ProcessingPipeline.pdrRefineStatic(points: &points)
+        }
 
         // ── 4. Geoid correction ───────────────────────────────────────────
         updateProgress("Applying geoid correction…")
@@ -216,6 +244,79 @@ final class ProcessingPipeline: ObservableObject {
         )
     }
 
+    // MARK: - ARKit VIO position refinement
+
+    /// Replaces GPS-derived horizontal positions with ARKit VIO positions.
+    ///
+    /// ARKit Visual-Inertial Odometry achieves < 5 cm relative accuracy over
+    /// short sessions, which is dramatically better than GPS (3–15 m).
+    ///
+    /// Coordinate mapping for a phone held face-down (LiDAR pointing at ground):
+    ///   • ARKit +X ≈ phone right ≈ geographic bearing (heading + 90°)
+    ///   • ARKit +Z ≈ phone backward ≈ geographic bearing (heading + 180°)
+    ///
+    /// Rotation formulae (θ = anchor heading in radians, CW from geographic north):
+    ///   ΔEast  =  Δx · cos θ + Δz · (−sin θ)
+    ///   ΔNorth =  Δx · (−sin θ) + Δz · (−cos θ)
+    ///
+    /// The result is centred on the GPS centroid of all capture points so that
+    /// the absolute position is approximately correct even though GPS is noisy.
+    private nonisolated static func arkitRefinePositions(
+        points: inout [SurveyPoint],
+        arkitPositions: [String: [Double]],
+        anchorHeadingDeg: Double
+    ) {
+        // Only non-outlier capture points that have ARKit data participate.
+        let arkPoints = points.filter { !$0.isOutlier && arkitPositions[$0.id.uuidString] != nil }
+        guard arkPoints.count >= 2 else { return }
+
+        // ARKit centroid (world space).
+        var arkCentX = 0.0, arkCentZ = 0.0
+        for p in arkPoints {
+            let pos = arkitPositions[p.id.uuidString]!
+            arkCentX += pos[0]
+            arkCentZ += pos[1]
+        }
+        arkCentX /= Double(arkPoints.count)
+        arkCentZ /= Double(arkPoints.count)
+
+        // GPS centroid (geographic anchor for absolute position).
+        let gpsCentLat = points.map(\.latitude).reduce(0, +) / Double(points.count)
+        let gpsCentLon = points.map(\.longitude).reduce(0, +) / Double(points.count)
+
+        let θ = anchorHeadingDeg * .pi / 180.0
+        let cosθ = cos(θ), sinθ = sin(θ)
+        let R = 6_371_000.0
+
+        for i in points.indices {
+            guard let pos = arkitPositions[points[i].id.uuidString] else { continue }
+            let Δx = pos[0] - arkCentX
+            let Δz = pos[1] - arkCentZ
+            let ΔEast  =  Δx * cosθ  + Δz * (-sinθ)
+            let ΔNorth =  Δx * (-sinθ) + Δz * (-cosθ)
+            let newLat = gpsCentLat + ΔNorth / R * (180.0 / .pi)
+            let newLon = gpsCentLon + ΔEast  / (R * cos(gpsCentLat * .pi / 180.0)) * (180.0 / .pi)
+            let p = points[i]
+            points[i] = SurveyPoint(
+                id:                  p.id,
+                timestamp:           p.timestamp,
+                latitude:            newLat,
+                longitude:           newLon,
+                fusedAltitude:       p.fusedAltitude,
+                groundElevation:     p.groundElevation,
+                lidarDistance:       p.lidarDistance,
+                gpsAltitude:         p.gpsAltitude,
+                baroAltitudeDelta:   p.baroAltitudeDelta,
+                tiltAngle:           p.tiltAngle,
+                horizontalAccuracy:  p.horizontalAccuracy,
+                verticalAccuracy:    p.verticalAccuracy,
+                isOutlier:           p.isOutlier,
+                captureType:         p.captureType,
+                interpolationWeight: p.interpolationWeight
+            )
+        }
+    }
+
     // MARK: - PDR refinement (static — safe to call from background thread)
 
     /// Lightweight copy of GPSManager.refineWithPDR that runs without @MainActor.
@@ -292,23 +393,75 @@ final class ProcessingPipeline: ObservableObject {
         )
     }
 
-    /// Approximate surveyed area using the convex hull shoelace formula (m²).
+    /// Surveyed area computed from the true convex hull of valid points (m²).
+    ///
+    /// Uses a Graham scan to compute the correct convex hull (O(n log n)), then
+    /// applies the shoelace formula to the hull vertices.  The previous approach
+    /// ran the shoelace formula directly on the capture-order point sequence, which
+    /// forms a self-intersecting zigzag polygon and produces nonsensical results.
     private nonisolated static func convexHullArea(_ pts: [SurveyPoint]) -> Double {
         guard pts.count >= 3 else { return 0 }
         let refLat = pts.map(\.latitude).reduce(0, +) / Double(pts.count)
         let refLon = pts.map(\.longitude).reduce(0, +) / Double(pts.count)
-        let local = pts.map { p -> (Double, Double) in
+        let local: [(Double, Double)] = pts.map { p in
             let (e, n) = latLonToEN(lat: p.latitude, lon: p.longitude,
                                     originLat: refLat, originLon: refLon)
             return (e, n)
         }
-        // Shoelace (signed area of polygon — not true convex hull but good estimate)
+        let hull = grahamScanHull(local)
+        guard hull.count >= 3 else { return 0 }
+        // Shoelace formula on the true convex hull (CCW vertex order from Graham scan).
         var area = 0.0
-        for i in 0..<local.count {
-            let j = (i + 1) % local.count
-            area += local[i].0 * local[j].1 - local[j].0 * local[i].1
+        for i in 0..<hull.count {
+            let j = (i + 1) % hull.count
+            area += hull[i].0 * hull[j].1 - hull[j].0 * hull[i].1
         }
-        return abs(area) / 2
+        return abs(area) / 2.0
+    }
+
+    /// Graham scan convex hull.  Returns vertices in CCW order.
+    /// Input points need not be sorted.  Handles collinear points by keeping
+    /// only the farthest point along each ray from the pivot.
+    private nonisolated static func grahamScanHull(
+        _ pts: [(Double, Double)]
+    ) -> [(Double, Double)] {
+        guard pts.count >= 3 else { return pts }
+
+        // Find the lowest (min y) point, break ties by min x (the pivot).
+        var lowestIdx = 0
+        for i in 1..<pts.count {
+            if pts[i].1 < pts[lowestIdx].1 ||
+               (pts[i].1 == pts[lowestIdx].1 && pts[i].0 < pts[lowestIdx].0) {
+                lowestIdx = i
+            }
+        }
+        var sorted = pts
+        sorted.swapAt(0, lowestIdx)
+        let pivot = sorted[0]
+
+        // Sort remaining points by polar angle from pivot (CCW).
+        // Collinear points are ordered by increasing distance.
+        sorted[1...].sort { a, b in
+            let ax = a.0 - pivot.0, ay = a.1 - pivot.1
+            let bx = b.0 - pivot.0, by = b.1 - pivot.1
+            let cross = ax * by - ay * bx
+            if cross != 0 { return cross > 0 }
+            return (ax * ax + ay * ay) < (bx * bx + by * by)
+        }
+
+        // Graham scan: maintain a stack of CCW-turn vertices.
+        var hull: [(Double, Double)] = []
+        for p in sorted {
+            while hull.count >= 2 {
+                let a = hull[hull.count - 2]
+                let b = hull[hull.count - 1]
+                // Cross product (b−a) × (p−a): ≤ 0 means right turn or collinear → pop.
+                let cross = (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+                if cross <= 0 { hull.removeLast() } else { break }
+            }
+            hull.append(p)
+        }
+        return hull
     }
 
 }
