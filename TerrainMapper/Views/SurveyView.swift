@@ -204,8 +204,16 @@ struct SurveyView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(Theme.background.opacity(0.5))
+        // Two-layer background: thin material blur + a darker tint so the bar is
+        // always legible against dark satellite imagery.
         .background(.ultraThinMaterial)
+        .background(Theme.background.opacity(0.65))
+        // Bottom hairline separator
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(.white.opacity(0.07))
+                .frame(height: 0.5)
+        }
     }
 
     private func mapControlButton(systemImage: String, action: @escaping () -> Void) -> some View {
@@ -386,35 +394,36 @@ struct SurveyView: View {
                 Task { await capturePoint() }
             }
         }) {
-            ZStack {
-                captureButtonBackground
-                HStack(spacing: 10) {
-                    if !sessionStarted {
-                        Image(systemName: "play.circle.fill").font(.title3)
-                        Text("Tap Start to begin").font(.system(size: 17, weight: .bold))
-                    } else if isCapturing {
-                        VStack(spacing: 6) {
-                            Text("Sampling LiDAR…").font(.system(size: 17, weight: .bold))
-                            ProgressView(value: engine.lidarCaptureProgress)
-                                .progressViewStyle(.linear)
-                                .tint(.white)
-                                .frame(maxWidth: 200)
-                        }
-                    } else if gpsTooInaccurate {
-                        Image(systemName: "location.slash.fill")
-                        Text("Weak GPS — Move to open sky").font(.system(size: 17, weight: .bold))
-                    } else if !engine.imuIsStationary {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text("Hold Steady").font(.system(size: 17, weight: .bold))
-                    } else {
-                        Image(systemName: "plus.circle.fill").font(.title3)
-                        Text("Capture Point").font(.system(size: 17, weight: .bold))
+            // ⚠️ Do NOT use ZStack here — RoundedRectangle is a greedy view that
+            // expands to fill all available space, making the button enormous.
+            // Use .background() so height is driven by content + padding only.
+            HStack(spacing: 10) {
+                if !sessionStarted {
+                    Image(systemName: "play.circle.fill").font(.title3)
+                    Text("Tap Start to begin").font(.system(size: 17, weight: .bold))
+                } else if isCapturing {
+                    VStack(spacing: 6) {
+                        Text("Sampling LiDAR…").font(.system(size: 17, weight: .bold))
+                        ProgressView(value: engine.lidarCaptureProgress)
+                            .progressViewStyle(.linear)
+                            .tint(.white)
+                            .frame(maxWidth: 200)
                     }
+                } else if gpsTooInaccurate {
+                    Image(systemName: "location.slash.fill")
+                    Text("Weak GPS — Move to open sky").font(.system(size: 17, weight: .bold))
+                } else if !engine.imuIsStationary {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text("Hold Steady").font(.system(size: 17, weight: .bold))
+                } else {
+                    Image(systemName: "plus.circle.fill").font(.title3)
+                    Text("Capture Point").font(.system(size: 17, weight: .bold))
                 }
-                .foregroundStyle(.white)
-                .padding(.vertical, 16)
-                .frame(maxWidth: .infinity)
             }
+            .foregroundStyle(.white)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity)
+            .background(captureButtonBackground)
         }
         .disabled(sessionStarted && (isCapturing || !engine.isSessionActive || gpsTooInaccurate))
         .animation(.easeInOut(duration: 0.2), value: isCapturing)
@@ -474,9 +483,11 @@ struct SurveyView: View {
                     .clipShape(Capsule())
 
                 if capturedPoints.count >= 2 {
-                    Text(String(format: "%.1f – %.1f m", elevMin, elevMax))
+                    Text(String(format: "%.1f–%.1f m", elevMin, elevMax))
                         .font(.system(.footnote, design: .monospaced, weight: .semibold))
                         .foregroundStyle(Theme.onSurface)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 } else {
                     Text("no points yet")
                         .font(.system(size: 10))
