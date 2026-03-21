@@ -26,7 +26,15 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=NO \
-            build
+            build 2>&1 | tee /tmp/xcodebuild.log
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/xcodebuild.log
+          retention-days: 7
 
       - name: Package as IPA
         run: |
