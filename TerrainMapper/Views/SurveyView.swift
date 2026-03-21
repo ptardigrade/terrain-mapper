@@ -254,6 +254,12 @@ struct SurveyView: View {
                     .font(.system(size: 9, weight: .bold))
                     .tracking(1.5)
                     .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
+                if engine.gpsAccuracy > 5 {
+                    Text("ARKit VIO")
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(1.0)
+                        .foregroundStyle(Color.cyan.opacity(0.85))
+                }
             }
             .frame(maxWidth: .infinity)
 

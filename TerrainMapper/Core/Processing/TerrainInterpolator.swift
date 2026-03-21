@@ -79,14 +79,14 @@ struct TerrainInterpolator {
             return emptyGrid(resolution: res)
         }
 
-        // Combine capture points and path-track breadcrumbs.
-        // Bounding box uses ALL points so path-track breadcrumbs that extend
-        // beyond the capture convex-hull still receive interpolated values.
+        // Combine capture points and path-track breadcrumbs for interpolation.
         let allPoints = points + pathPoints
 
         // ── Compute bounding box & origin ──────────────────────────────────
-        let lats = allPoints.map(\.latitude)
-        let lons = allPoints.map(\.longitude)
+        // Use capture points only — path-track breadcrumbs can extend far
+        // outside the survey area and would inflate the grid.
+        let lats = points.map(\.latitude)
+        let lons = points.map(\.longitude)
         let minLat = lats.min()!, maxLat = lats.max()!
         let minLon = lons.min()!, maxLon = lons.max()!
 
@@ -113,6 +113,16 @@ struct TerrainInterpolator {
             return (e, n, p.groundElevation, p.interpolationWeight)
         }
 
+        // ── Convex hull of capture points (local EN) for grid masking ────
+        // Cells outside the hull are left nil — no extrapolation beyond the
+        // surveyed area.
+        let captureLocalXY: [(x: Double, y: Double)] = points.map { p in
+            let (e, n) = latLonToEN(lat: p.latitude, lon: p.longitude,
+                                    originLat: centLat, originLon: centLon)
+            return (e, n)
+        }
+        let captureHull = grahamScanHullXY(captureLocalXY)
+
         // ── Fit variogram if kriging (uses capture points only for fitting) ─
         // Path-track points are excluded from variogram estimation since their
         // elevation uncertainty would distort the semivariance structure.
@@ -136,6 +146,10 @@ struct TerrainInterpolator {
                 let lon = originLon + (Double(col) + 0.5) * resDeg
                 let (qx, qy) = latLonToEN(lat: lat, lon: lon,
                                            originLat: centLat, originLon: centLon)
+
+                // Skip cells outside the convex hull of capture points
+                guard captureHull.count < 3 ||
+                      pointInConvexHull((qx, qy), hull: captureHull) else { continue }
 
                 // Find neighbours within search radius
                 let neighbours = nearestPoints(localPts, to: (qx, qy),
@@ -366,5 +380,52 @@ struct TerrainInterpolator {
                     resolutionDegrees: resolution / 111_320,
                     resolutionMeters:  resolution,
                     width: 0, height: 0, elevations: [])
+    }
+
+    // MARK: - Convex hull masking
+
+    /// Graham scan convex hull on 2-D (x, y) points.
+    private func grahamScanHullXY(_ pts: [(x: Double, y: Double)]) -> [(x: Double, y: Double)] {
+        guard pts.count >= 3 else { return pts }
+        var arr = pts
+        var lowestIdx = 0
+        for i in 1..<arr.count {
+            if arr[i].y < arr[lowestIdx].y ||
+               (arr[i].y == arr[lowestIdx].y && arr[i].x < arr[lowestIdx].x) {
+                lowestIdx = i
+            }
+        }
+        arr.swapAt(0, lowestIdx)
+        let pivot = arr[0]
+        arr[1...].sort { a, b in
+            let ax = a.x - pivot.x, ay = a.y - pivot.y
+            let bx = b.x - pivot.x, by = b.y - pivot.y
+            let cross = ax * by - ay * bx
+            if cross != 0 { return cross > 0 }
+            return (ax*ax + ay*ay) < (bx*bx + by*by)
+        }
+        var hull: [(x: Double, y: Double)] = []
+        for p in arr {
+            while hull.count >= 2 {
+                let a = hull[hull.count - 2], b = hull[hull.count - 1]
+                let cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+                if cross <= 0 { hull.removeLast() } else { break }
+            }
+            hull.append(p)
+        }
+        return hull
+    }
+
+    /// Returns true if point `p` is inside (or on the boundary of) the convex hull.
+    /// Hull vertices must be in counter-clockwise order (as produced by `grahamScanHullXY`).
+    private func pointInConvexHull(_ p: (Double, Double), hull: [(x: Double, y: Double)]) -> Bool {
+        let n = hull.count
+        guard n >= 3 else { return true }
+        for i in 0..<n {
+            let a = hull[i], b = hull[(i + 1) % n]
+            let cross = (b.x - a.x) * (p.1 - a.y) - (b.y - a.y) * (p.0 - a.x)
+            if cross < -1e-9 { return false }
+        }
+        return true
     }
 }

@@ -47,6 +47,20 @@ struct SurveySession: Identifiable, Codable {
     /// Populated after the first GPS fix by looking up the local EGM96 table.
     var geoidOffset: Double
 
+    // MARK: - ARKit VIO positioning data
+
+    /// ARKit world-space (x, z) positions recorded at each capture point,
+    /// keyed by the SurveyPoint UUID string.  Nil on sessions recorded before
+    /// ARKit VIO tracking was introduced (backward-compatible optional).
+    ///
+    /// Stored as `[String: [Double]]` rather than `[UUID: simd_float3]` for
+    /// Codable compatibility.  Each value is `[x, z]` in ARKit world metres.
+    var arkitPositions: [String: [Double]]? = nil
+
+    /// Compass heading (degrees CW from true north) at the time the ARKit
+    /// session started.  Used to rotate ARKit world XZ to geographic East/North.
+    var arkitAnchorHeading: Double? = nil
+
     // MARK: - Initialisers
 
     init(stickHeight: Double = 1.1, geoidOffset: Double = 0.0, name: String = "") {

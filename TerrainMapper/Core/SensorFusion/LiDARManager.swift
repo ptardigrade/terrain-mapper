@@ -71,12 +71,33 @@ final class LiDARManager: NSObject, ObservableObject {
     // MARK: - Private
 
     private var arSession: ARSession?
+
+    /// True after the first captureGroundDistance() call initialises the session.
+    /// Subsequent calls reuse the running session so ARKit VIO tracking is
+    /// preserved across capture points (no world-origin reset between captures).
+    private var isSessionRunning = false
+
     private var depthSamples: [Float] = []
     /// Counts every ARFrame that arrives during a capture, regardless of how
     /// many valid depth pixels it contributed.  This prevents infinite hangs
     /// when most pixels are filtered (glass, mirror, sunlit grass, etc.).
     private var frameCount: Int = 0
     private var continuation: CheckedContinuation<Double, Error>?
+
+    // MARK: - ARKit world-position access
+
+    /// The camera's position in ARKit world space at the most recent AR frame.
+    ///
+    /// x and z are the horizontal components (metres from the world origin set
+    /// on the first LiDAR capture).  Used by SensorFusionEngine to store
+    /// relative positions for ARKit VIO post-processing.
+    ///
+    /// Returns nil when no AR session is running or no frame has been received.
+    var currentWorldPosition: simd_float3? {
+        guard let frame = arSession?.currentFrame else { return nil }
+        let col3 = frame.camera.transform.columns.3
+        return simd_float3(col3.x, col3.y, col3.z)
+    }
 
     // MARK: - Public API
 
@@ -102,15 +123,22 @@ final class LiDARManager: NSObject, ObservableObject {
         frameCount    = 0
         captureProgress = 0.0
 
-        // Start (or restart) the AR session with depth enabled.
-        let config = ARWorldTrackingConfiguration()
-        config.frameSemantics = .sceneDepth
-
-        if arSession == nil {
-            arSession = ARSession()
-            arSession?.delegate = self
+        // Start the AR session fresh on the first capture only.
+        // Subsequent captures reuse the already-running session so the ARKit
+        // world origin (and VIO tracking state) is preserved across captures —
+        // this lets us read relative camera positions to correct for GPS error.
+        if !isSessionRunning {
+            let config = ARWorldTrackingConfiguration()
+            config.frameSemantics = .sceneDepth
+            if arSession == nil {
+                arSession = ARSession()
+                arSession?.delegate = self
+            }
+            arSession?.run(config, options: [.resetTracking, .removeExistingAnchors])
+            isSessionRunning = true
         }
-        arSession?.run(config, options: [.resetTracking, .removeExistingAnchors])
+        // else: session is already running — just reset counters and start
+        // accumulating fresh frames from the still-active session.
 
         // Suspend the current task until the delegate has collected enough frames.
         let slantDistance: Double = try await withCheckedThrowingContinuation { cont in
@@ -118,7 +146,9 @@ final class LiDARManager: NSObject, ObservableObject {
         }
 
         isCapturing = false
-        arSession?.pause()
+        // Do NOT pause the session between captures: keeping the AR session
+        // running preserves VIO world tracking so currentWorldPosition returns
+        // consistent positions relative to the first capture.
 
         // Apply tilt correction: V = D × cos(θ)
         let tiltFactor = imuManager?.tiltCorrectionFactor ?? 1.0
@@ -127,9 +157,15 @@ final class LiDARManager: NSObject, ObservableObject {
         return max(vertical, 0.01)   // clamp to positive
     }
 
-    /// Pauses the underlying ARSession (call when backgrounding the app).
+    /// Stops the underlying ARSession.
+    ///
+    /// Call this from SensorFusionEngine.endSession() to release resources.
+    /// Setting arSession to nil forces a fresh session (with a new world origin)
+    /// on the next survey, which is the correct behaviour.
     func pauseSession() {
         arSession?.pause()
+        arSession = nil
+        isSessionRunning = false
     }
 }
 

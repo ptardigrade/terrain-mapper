@@ -96,6 +96,20 @@ final class SensorFusionEngine: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    // MARK: - ARKit VIO state
+
+    /// True until the first capture point of a session is recorded.
+    /// On the first capture we record the compass heading to anchor the
+    /// ARKit world frame to geographic North.
+    private var isFirstCapture = true
+
+    /// Accumulates ARKit world-space (x, z) positions keyed by SurveyPoint UUID.
+    /// Copied into SurveySession.arkitPositions at endSession().
+    private var arkitPositions: [String: [Double]] = [:]
+
+    /// Compass heading (degrees CW from true north) when the ARKit session started.
+    private var arkitAnchorHeading: Double? = nil
+
     /// Timeout in seconds for the stationary gate during a capture.
     private let kStationaryTimeoutSeconds = 15.0
 
@@ -109,6 +123,9 @@ final class SensorFusionEngine: ObservableObject {
         kalmanInitialised = false
         session    = SurveySession(stickHeight: stickHeight, name: name)
         pointCount = 0
+        isFirstCapture    = true
+        arkitPositions    = [:]
+        arkitAnchorHeading = nil
 
         imuManager.start()
         barometerManager.start()
@@ -141,11 +158,18 @@ final class SensorFusionEngine: ObservableObject {
         imuManager.stop()
         barometerManager.stop()
         gpsManager.stop()
-        lidarManager.pauseSession()
+        lidarManager.pauseSession()   // stops ARSession and resets isSessionRunning
         pathTrackRecorder.stop()
         cancellables.removeAll()
 
         s.endTime = Date()
+
+        // Attach ARKit VIO data collected during capture so the processing pipeline
+        // can refine horizontal positions independently of GPS accuracy.
+        if !arkitPositions.isEmpty {
+            s.arkitPositions    = arkitPositions
+            s.arkitAnchorHeading = arkitAnchorHeading
+        }
 
         // Outlier detection and PDR refinement are intentionally deferred to
         // ProcessingPipeline so the user's configured thresholds (madThreshold,
@@ -212,12 +236,34 @@ final class SensorFusionEngine: ObservableObject {
             kalman.updateGPS(altitude: location.altitude)
         }
 
+        // ── Step 5b: Record ARKit world position for VIO-based refinement ──
+        // The LiDAR ARSession has been running continuously since the first
+        // capturePoint() call (no world-origin reset between captures).
+        // We record the camera's world-space (x, z) now — after the 3-second
+        // LiDAR accumulation window — while the phone is still stationary over
+        // the measurement point.
+        let arkitPos = lidarManager.currentWorldPosition
+
+        // On the very first capture, record the compass heading to anchor the
+        // ARKit world frame to geographic North for the processing pipeline.
+        if isFirstCapture {
+            arkitAnchorHeading = gpsManager.currentHeading
+            isFirstCapture = false
+        }
+
         // ── Step 6: Assemble SurveyPoint ──────────────────────────────────
         let fusedAltitude  = kalman.state[0]
         let groundElevation = fusedAltitude - lidarDistance
 
+        let pointID = UUID()
+
+        // Store ARKit position keyed by UUID so the pipeline can look it up.
+        if let pos = arkitPos {
+            arkitPositions[pointID.uuidString] = [Double(pos.x), Double(pos.z)]
+        }
+
         let point = SurveyPoint(
-            id:                  UUID(),
+            id:                  pointID,
             timestamp:           Date(),
             latitude:            location.coordinate.latitude,
             longitude:           location.coordinate.longitude,
