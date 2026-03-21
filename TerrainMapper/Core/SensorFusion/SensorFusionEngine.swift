@@ -102,7 +102,7 @@ final class SensorFusionEngine: ObservableObject {
     // MARK: - Session lifecycle
 
     /// Start all sensor streams and begin accumulating data.
-    func startSession(stickHeight: Double = 2.0, name: String = "") {
+    func startSession(stickHeight: Double = 1.1, name: String = "") {
         guard !isSessionActive else { return }
 
         kalman     = KalmanFilter()

@@ -124,26 +124,33 @@ struct ResultsView: View {
                 ActivityShareSheet(urls: shareURLs)
                     .presentationDetents([.medium, .large])
             }
+            .sheet(isPresented: $showDiagnosticShare) {
+                if let url = diagnosticURL {
+                    ActivityShareSheet(urls: [url])
+                        .presentationDetents([.medium, .large])
+                }
+            }
         }
     }
 
     // MARK: - Diagnostic export (dev)
 
+    @State private var diagnosticURL: URL?
+    @State private var showDiagnosticShare = false
+
     private func runDiagnosticExport() async {
         do {
             let exporter = DiagnosticExporter()
             let data = try exporter.export(terrain: terrain)
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let folder = docs.appendingPathComponent("TerrainMapper")
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let tmpDir = FileManager.default.temporaryDirectory
             let safeName = terrain.session.name
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "[^a-zA-Z0-9 _-]", with: "_", options: .regularExpression)
             let fileName = safeName.isEmpty ? "diagnostic" : safeName
-            let url = folder.appendingPathComponent("\(fileName)_diagnostic.json")
+            let url = tmpDir.appendingPathComponent("\(fileName)_diagnostic.json")
             try data.write(to: url)
-            shareURLs = [url]
-            showShareSheet = true
+            diagnosticURL = url
+            showDiagnosticShare = true
         } catch {
             exportErrorMessage = "Diagnostic export failed: \(error.localizedDescription)"
             showExportError = true
@@ -289,6 +296,7 @@ struct ResultsView: View {
                     }
                 }
             }
+            // Pinch-to-zoom — always two fingers, never conflicts with sheet dismiss
             .gesture(
                 MagnifyGesture()
                     .onChanged { value in
@@ -298,8 +306,11 @@ struct ResultsView: View {
                         lastContourScale = contourScale
                     }
             )
+            // Pan — uses a huge minimumDistance when NOT zoomed so the gesture
+            // never fires and the parent sheet's pull-to-dismiss works normally.
+            // Once zoomed in (scale > 1.05) the threshold drops to 5 pt.
             .simultaneousGesture(
-                DragGesture()
+                DragGesture(minimumDistance: contourScale > 1.05 ? 5 : 10_000)
                     .onChanged { value in
                         contourOffset = CGSize(
                             width:  lastContourOffset.width  + value.translation.width,

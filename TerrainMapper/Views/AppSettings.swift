@@ -14,7 +14,7 @@ final class AppSettings: ObservableObject {
     // MARK: - Survey / capture
 
     /// Measurement-stick height in metres (fallback when LiDAR is unavailable).
-    @AppStorage("stickHeight") var stickHeight: Double = 2.0
+    @AppStorage("stickHeight") var stickHeight: Double = 1.1
 
     // MARK: - Processing
 

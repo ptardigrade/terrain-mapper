@@ -49,7 +49,7 @@ struct SurveySession: Identifiable, Codable {
 
     // MARK: - Initialisers
 
-    init(stickHeight: Double = 2.0, geoidOffset: Double = 0.0, name: String = "") {
+    init(stickHeight: Double = 1.1, geoidOffset: Double = 0.0, name: String = "") {
         self.id              = UUID()
         self.startTime       = Date()
         self.endTime         = nil
