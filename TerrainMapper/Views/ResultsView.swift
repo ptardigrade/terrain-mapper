@@ -22,11 +22,6 @@ struct ResultsView: View {
     @State private var exportErrorMessage: String = ""
     @State private var showShareSheet: Bool = false
     @State private var shareURLs:      [URL] = []
-    // Contour view zoom/pan state
-    @State private var contourScale: CGFloat = 1.0
-    @State private var contourOffset: CGSize = .zero
-    @State private var lastContourScale: CGFloat = 1.0
-    @State private var lastContourOffset: CGSize = .zero
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var exportManager: ExportManager
 
@@ -120,14 +115,16 @@ struct ResultsView: View {
             } message: {
                 Text(exportErrorMessage)
             }
-            .sheet(isPresented: $showShareSheet) {
-                ActivityShareSheet(urls: shareURLs)
-                    .presentationDetents([.medium, .large])
+            .onChange(of: showShareSheet) { _, show in
+                if show {
+                    SharePresenter.share(urls: shareURLs)
+                    showShareSheet = false
+                }
             }
-            .sheet(isPresented: $showDiagnosticShare) {
-                if let url = diagnosticURL {
-                    ActivityShareSheet(urls: [url])
-                        .presentationDetents([.medium, .large])
+            .onChange(of: showDiagnosticShare) { _, show in
+                if show, let url = diagnosticURL {
+                    SharePresenter.share(urls: [url])
+                    showDiagnosticShare = false
                 }
             }
         }
@@ -228,129 +225,8 @@ struct ResultsView: View {
     // MARK: - Contours tab
 
     private var contourView: some View {
-        GeometryReader { geo in
-            Canvas { ctx, size in
-                let contours = terrain.contours
-                guard !contours.isEmpty else { return }
-
-                // Compute geographic bounds
-                let allCoords = contours.flatMap(\.coordinates)
-                guard !allCoords.isEmpty else { return }
-                let latMin = allCoords.map(\.latitude).min()!
-                let latMax = allCoords.map(\.latitude).max()!
-                let lonMin = allCoords.map(\.longitude).min()!
-                let lonMax = allCoords.map(\.longitude).max()!
-                let latSpan = max(1e-9, latMax - latMin)
-                let lonSpan = max(1e-9, lonMax - lonMin)
-
-                let pad: Double = 30
-
-                let scale = contourScale
-                let offset = contourOffset
-
-                func project(_ c: (latitude: Double, longitude: Double)) -> CGPoint {
-                    let baseX = pad + (c.longitude - lonMin) / lonSpan * (size.width  - 2*pad)
-                    let baseY = size.height - pad - (c.latitude - latMin) / latSpan * (size.height - 2*pad)
-                    // Apply zoom centred on the view centre, then translate
-                    let cx = size.width / 2, cy = size.height / 2
-                    let x = (baseX - cx) * scale + cx + offset.width
-                    let y = (baseY - cy) * scale + cy + offset.height
-                    return CGPoint(x: x, y: y)
-                }
-
-                // Sort contours by elevation (alternating major/minor)
-                let sortedContours = contours.sorted { $0.elevation < $1.elevation }
-                let elevMin = sortedContours.first?.elevation ?? 0
-                let elevMax = sortedContours.last?.elevation ?? 1
-                let span    = max(1, elevMax - elevMin)
-                let interval: Double = sortedContours.count >= 2
-                    ? abs(sortedContours[1].elevation - sortedContours[0].elevation)
-                    : 0.5
-
-                // Adaptive label size — scales with zoom
-                let labelSize = max(6, min(14, 8 * scale))
-
-                for contour in sortedContours {
-                    guard contour.coordinates.count >= 2 else { continue }
-
-                    let isMajor = interval > 0 && contour.elevation.truncatingRemainder(dividingBy: interval * 5) < interval / 2
-                    let frac    = (contour.elevation - elevMin) / span
-                    let hue     = 0.67 * (1 - frac)
-                    let color   = Color(hue: hue, saturation: 0.7, brightness: 0.6)
-                    let lineWidth: Double = (isMajor ? 1.5 : 0.8) * Double(scale)
-
-                    var path = Path()
-                    let pts = contour.coordinates.map(project)
-                    path.move(to: pts[0])
-                    for pt in pts.dropFirst() { path.addLine(to: pt) }
-
-                    ctx.stroke(path, with: .color(color), lineWidth: lineWidth)
-
-                    if isMajor, let mid = pts.middle {
-                        ctx.draw(
-                            Text(String(format: "%.1fm", contour.elevation))
-                                .font(.system(size: labelSize, weight: .medium, design: .monospaced))
-                                .foregroundStyle(color),
-                            at: mid, anchor: .center
-                        )
-                    }
-                }
-            }
-            // Pinch-to-zoom — always two fingers, never conflicts with sheet dismiss
-            .gesture(
-                MagnifyGesture()
-                    .onChanged { value in
-                        contourScale = max(0.5, min(10, lastContourScale * value.magnification))
-                    }
-                    .onEnded { _ in
-                        lastContourScale = contourScale
-                    }
-            )
-            // Pan — uses a huge minimumDistance when NOT zoomed so the gesture
-            // never fires and the parent sheet's pull-to-dismiss works normally.
-            // Once zoomed in (scale > 1.05) the threshold drops to 5 pt.
-            .simultaneousGesture(
-                DragGesture(minimumDistance: contourScale > 1.05 ? 5 : 10_000)
-                    .onChanged { value in
-                        contourOffset = CGSize(
-                            width:  lastContourOffset.width  + value.translation.width,
-                            height: lastContourOffset.height + value.translation.height
-                        )
-                    }
-                    .onEnded { _ in
-                        lastContourOffset = contourOffset
-                    }
-            )
-            .overlay(alignment: .topTrailing) {
-                // Reset zoom button
-                if contourScale != 1.0 || contourOffset != .zero {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            contourScale = 1.0
-                            contourOffset = .zero
-                            lastContourScale = 1.0
-                            lastContourOffset = .zero
-                        }
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.caption)
-                            .foregroundStyle(.white)
-                            .padding(8)
-                            .background(.black.opacity(0.5), in: Circle())
-                    }
-                    .padding(12)
-                }
-            }
-            .overlay(alignment: .bottomLeading) {
-                Text("Pinch to zoom  •  Drag to pan")
-                    .font(.caption2)
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-                    .padding(12)
-            }
-        }
-        .background(Theme.background)
+        ContourScrollView(contours: terrain.contours)
+            .ignoresSafeArea(edges: .bottom)
     }
 
     // MARK: - Stats tab
@@ -456,6 +332,139 @@ private struct StatCard: View {
 }
 
 // MARK: - TerrainSceneView
+
+// MARK: - ContourScrollView
+
+/// UIViewRepresentable that renders contour lines inside a UIScrollView.
+/// Uses native UIKit gesture recognizers so pinch/pan are consumed at the UIKit
+/// level — they never reach SwiftUI's sheet dismiss gesture.  This is the same
+/// reason Map and SCNView work inside sheets without conflict.
+struct ContourScrollView: UIViewRepresentable {
+    let contours: [ContourLine]
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 0.5
+        scrollView.maximumZoomScale = 10.0
+        scrollView.bouncesZoom = true
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = UIColor(red: 0.07, green: 0.09, blue: 0.07, alpha: 1.0)
+
+        let contentView = ContourContentView()
+        contentView.contours = contours
+        contentView.tag = 999
+        scrollView.addSubview(contentView)
+
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        guard let contentView = scrollView.viewWithTag(999) as? ContourContentView else { return }
+        contentView.contours = contours
+
+        let size = scrollView.bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+
+        contentView.frame = CGRect(origin: .zero, size: size)
+        scrollView.contentSize = size
+        contentView.setNeedsDisplay()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            scrollView.viewWithTag(999)
+        }
+    }
+}
+
+/// Core Graphics view that draws contour lines.  Lives inside a UIScrollView
+/// so that pinch-to-zoom and pan are handled by UIKit gesture recognizers.
+private final class ContourContentView: UIView {
+    var contours: [ContourLine] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        contentMode = .redraw
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        guard !contours.isEmpty else { return }
+
+        let allCoords = contours.flatMap(\.coordinates)
+        guard !allCoords.isEmpty else { return }
+
+        let latMin = allCoords.map(\.latitude).min()!
+        let latMax = allCoords.map(\.latitude).max()!
+        let lonMin = allCoords.map(\.longitude).min()!
+        let lonMax = allCoords.map(\.longitude).max()!
+        let latSpan = max(1e-9, latMax - latMin)
+        let lonSpan = max(1e-9, lonMax - lonMin)
+        let pad: CGFloat = 30
+
+        func project(_ c: (latitude: Double, longitude: Double)) -> CGPoint {
+            let x = pad + CGFloat((c.longitude - lonMin) / lonSpan) * (rect.width - 2 * pad)
+            let y = rect.height - pad - CGFloat((c.latitude - latMin) / latSpan) * (rect.height - 2 * pad)
+            return CGPoint(x: x, y: y)
+        }
+
+        let sorted = contours.sorted { $0.elevation < $1.elevation }
+        let elevMin = sorted.first?.elevation ?? 0
+        let elevMax = sorted.last?.elevation ?? 1
+        let span = max(1, elevMax - elevMin)
+        let interval: Double = sorted.count >= 2
+            ? abs(sorted[1].elevation - sorted[0].elevation)
+            : 0.5
+
+        for contour in sorted {
+            guard contour.coordinates.count >= 2 else { continue }
+
+            let isMajor = interval > 0 && contour.elevation.truncatingRemainder(dividingBy: interval * 5) < interval / 2
+            let frac = (contour.elevation - elevMin) / span
+            let hue = 0.67 * (1 - frac)
+            let color = UIColor(hue: hue, saturation: 0.7, brightness: 0.6, alpha: 1.0)
+            let lineWidth: CGFloat = isMajor ? 1.5 : 0.8
+
+            let pts = contour.coordinates.map(project)
+
+            ctx.setStrokeColor(color.cgColor)
+            ctx.setLineWidth(lineWidth)
+            ctx.beginPath()
+            ctx.move(to: pts[0])
+            for pt in pts.dropFirst() { ctx.addLine(to: pt) }
+            ctx.strokePath()
+
+            // Elevation label on major contours
+            if isMajor, let mid = pts.middle {
+                let label = String(format: "%.1fm", contour.elevation)
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.monospacedSystemFont(ofSize: 8, weight: .medium),
+                    .foregroundColor: color
+                ]
+                let size = (label as NSString).size(withAttributes: attrs)
+                let origin = CGPoint(x: mid.x - size.width / 2, y: mid.y - size.height / 2)
+                (label as NSString).draw(at: origin, withAttributes: attrs)
+            }
+        }
+    }
+}
+
+// Helper — extend Array for middle element
+private extension Array {
+    var middle: Element? {
+        isEmpty ? nil : self[count / 2]
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 
 /// UIViewRepresentable wrapper for SCNView displaying the TerrainMesh.
 struct TerrainSceneView: UIViewRepresentable {
@@ -581,23 +590,23 @@ struct TerrainSceneView: UIViewRepresentable {
     }
 }
 
-// MARK: - Array middle helper
+// MARK: - Imperative Share
 
-private extension Array {
-    var middle: Element? {
-        isEmpty ? nil : self[count / 2]
+/// Present UIActivityViewController imperatively from the key window.
+/// This avoids the blank-screen bug caused by embedding UIActivityViewController
+/// inside a SwiftUI `.sheet` (modal-inside-modal).
+enum SharePresenter {
+    @MainActor
+    static func share(urls: [URL]) {
+        guard !urls.isEmpty,
+              let scene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene }).first,
+              let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController
+        else { return }
+        // Walk to the topmost presented controller so we don't conflict with other modals.
+        var top = root
+        while let presented = top.presentedViewController { top = presented }
+        let vc = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        top.present(vc, animated: true)
     }
-}
-
-// MARK: - ActivityShareSheet
-
-/// UIActivityViewController wrapper for sharing exported files.
-private struct ActivityShareSheet: UIViewControllerRepresentable {
-    let urls: [URL]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: urls, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiView: UIActivityViewController, context: Context) {}
 }
