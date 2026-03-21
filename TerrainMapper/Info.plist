@@ -55,6 +55,14 @@
     <key>NSCameraUsageDescription</key>
     <string>TerrainMapper uses the camera and LiDAR scanner to measure the distance from the device to the ground surface.</string>
 
+    <!-- Launch screen — REQUIRED for full-screen rendering on all iPhones.
+         Without this key, iOS renders the app in a legacy letterboxed
+         compatibility mode with black bars on top and bottom. An empty
+         dictionary gives a plain colour launch screen (uses the system
+         background) which is fine for a SwiftUI app that loads instantly. -->
+    <key>UILaunchScreen</key>
+    <dict/>
+
     <!-- Scene configuration (default SwiftUI lifecycle) -->
     <key>UIApplicationSceneManifest</key>
     <dict>
