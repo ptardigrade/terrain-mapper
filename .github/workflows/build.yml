@@ -37,14 +37,15 @@ jobs:
           echo "Found app: $APP"
           ls "$APP/Info.plist"  # verify it's complete
 
+          IPA_NAME="TerrainMapper v.0.${{ github.run_number }}.ipa"
           mkdir -p Payload
           cp -r "$APP" Payload/
-          zip -r TerrainMapper.ipa Payload/
-          echo "IPA size: $(du -sh TerrainMapper.ipa)"
+          zip -r "$IPA_NAME" Payload/
+          echo "IPA: $IPA_NAME ($(du -sh "$IPA_NAME" | cut -f1))"
 
       - name: Upload IPA as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TerrainMapper-${{ github.run_number }}
-          path: TerrainMapper.ipa
+          name: TerrainMapper v.0.${{ github.run_number }}
+          path: "TerrainMapper v.0.${{ github.run_number }}.ipa"
           retention-days: 30
