@@ -1,0 +1,559 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		/* ── Phase 1: Sensor Fusion Core ─────────────────────────────── */
+		AA000001000000000000001A /* TerrainMapperApp.swift in Sources */     = {isa = PBXBuildFile; fileRef = AA000001000000000000001B; };
+		AA000001000000000000002A /* ContentView.swift in Sources */          = {isa = PBXBuildFile; fileRef = AA000001000000000000002B; };
+		AA000001000000000000003A /* SurveyPoint.swift in Sources */          = {isa = PBXBuildFile; fileRef = AA000001000000000000003B; };
+		AA000001000000000000004A /* SurveySession.swift in Sources */        = {isa = PBXBuildFile; fileRef = AA000001000000000000004B; };
+		AA000001000000000000005A /* KalmanFilter.swift in Sources */         = {isa = PBXBuildFile; fileRef = AA000001000000000000005B; };
+		AA000001000000000000006A /* BarometerManager.swift in Sources */     = {isa = PBXBuildFile; fileRef = AA000001000000000000006B; };
+		AA000001000000000000007A /* LiDARManager.swift in Sources */         = {isa = PBXBuildFile; fileRef = AA000001000000000000007B; };
+		AA000001000000000000008A /* IMUManager.swift in Sources */           = {isa = PBXBuildFile; fileRef = AA000001000000000000008B; };
+		AA000001000000000000009A /* GPSManager.swift in Sources */           = {isa = PBXBuildFile; fileRef = AA000001000000000000009B; };
+		AA00000100000000000000AA /* SensorFusionEngine.swift in Sources */   = {isa = PBXBuildFile; fileRef = AA00000100000000000000AB; };
+		/* Frameworks (Phase 1) */
+		AA00000100000000000000BA /* ARKit.framework in Frameworks */         = {isa = PBXBuildFile; fileRef = AA00000100000000000000BB; };
+		AA00000100000000000000CA /* CoreMotion.framework in Frameworks */    = {isa = PBXBuildFile; fileRef = AA00000100000000000000CB; };
+		AA00000100000000000000DA /* CoreLocation.framework in Frameworks */  = {isa = PBXBuildFile; fileRef = AA00000100000000000000DB; };
+		/* ── Phase 2: Processing Pipeline ────────────────────────────── */
+		BB0000020000000000000001 /* TerrainTypes.swift in Sources */         = {isa = PBXBuildFile; fileRef = BB0000010000000000000001; };
+		BB0000020000000000000002 /* OutlierDetector.swift in Sources */      = {isa = PBXBuildFile; fileRef = BB0000010000000000000002; };
+		BB0000020000000000000003 /* LoopClosureProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000003; };
+		BB0000020000000000000004 /* GeoidCorrector.swift in Sources */       = {isa = PBXBuildFile; fileRef = BB0000010000000000000004; };
+		BB0000020000000000000005 /* TerrainInterpolator.swift in Sources */  = {isa = PBXBuildFile; fileRef = BB0000010000000000000005; };
+		BB0000020000000000000006 /* MeshGenerator.swift in Sources */        = {isa = PBXBuildFile; fileRef = BB0000010000000000000006; };
+		BB0000020000000000000007 /* ContourGenerator.swift in Sources */     = {isa = PBXBuildFile; fileRef = BB0000010000000000000007; };
+		BB0000020000000000000008 /* ProcessingPipeline.swift in Sources */   = {isa = PBXBuildFile; fileRef = BB0000010000000000000008; };
+		/* ── Phase 3: Views ──────────────────────────────────────────── */
+		CC0000020000000000000001 /* AppSettings.swift in Sources */          = {isa = PBXBuildFile; fileRef = CC0000010000000000000001; };
+		CC0000020000000000000002 /* TiltMeterView.swift in Sources */        = {isa = PBXBuildFile; fileRef = CC0000010000000000000002; };
+		CC0000020000000000000003 /* SurveyView.swift in Sources */           = {isa = PBXBuildFile; fileRef = CC0000010000000000000003; };
+		CC0000020000000000000004 /* ResultsView.swift in Sources */          = {isa = PBXBuildFile; fileRef = CC0000010000000000000004; };
+		CC0000020000000000000005 /* SettingsView.swift in Sources */         = {isa = PBXBuildFile; fileRef = CC0000010000000000000005; };
+		/* ── Phase 4: Export ─────────────────────────────────────────── */
+		DD0000020000000000000001 /* PLYExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000001; };
+		DD0000020000000000000002 /* LASExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000002; };
+		DD0000020000000000000003 /* GeoJSONExporter.swift in Sources */      = {isa = PBXBuildFile; fileRef = DD0000010000000000000003; };
+		DD0000020000000000000004 /* GeoTIFFExporter.swift in Sources */      = {isa = PBXBuildFile; fileRef = DD0000010000000000000004; };
+		DD0000020000000000000005 /* OBJExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000005; };
+		DD0000020000000000000006 /* CSVExporter.swift in Sources */          = {isa = PBXBuildFile; fileRef = DD0000010000000000000006; };
+		DD0000020000000000000007 /* ExportManager.swift in Sources */        = {isa = PBXBuildFile; fileRef = DD0000010000000000000007; };
+		/* New frameworks */
+		EE0000020000000000000001 /* SceneKit.framework in Frameworks */      = {isa = PBXBuildFile; fileRef = EE0000010000000000000001; };
+		EE0000020000000000000002 /* MapKit.framework in Frameworks */        = {isa = PBXBuildFile; fileRef = EE0000010000000000000002; };
+		/* Phase 5: Persistence + History */
+		FF000002000000000000001A /* SessionStore.swift in Sources */         = {isa = PBXBuildFile; fileRef = FF000002000000000000001B; };
+		FF000002000000000000002A /* SessionHistoryView.swift in Sources */   = {isa = PBXBuildFile; fileRef = FF000002000000000000002B; };
+		/* Phase 6: Theme + PathTracking */
+		GG0000020000000000000001 /* Theme.swift in Sources */                = {isa = PBXBuildFile; fileRef = GG0000010000000000000001; };
+		GG0000020000000000000002 /* PathTrackRecorder.swift in Sources */    = {isa = PBXBuildFile; fileRef = GG0000010000000000000002; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		/* Phase 1 sources */
+		AA000001000000000000001B /* TerrainMapperApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerrainMapperApp.swift; sourceTree = "<group>"; };
+		AA000001000000000000002B /* ContentView.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA000001000000000000003B /* SurveyPoint.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyPoint.swift; sourceTree = "<group>"; };
+		AA000001000000000000004B /* SurveySession.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveySession.swift; sourceTree = "<group>"; };
+		AA000001000000000000005B /* KalmanFilter.swift */     = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KalmanFilter.swift; sourceTree = "<group>"; };
+		AA000001000000000000006B /* BarometerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarometerManager.swift; sourceTree = "<group>"; };
+		AA000001000000000000007B /* LiDARManager.swift */     = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiDARManager.swift; sourceTree = "<group>"; };
+		AA000001000000000000008B /* IMUManager.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMUManager.swift; sourceTree = "<group>"; };
+		AA000001000000000000009B /* GPSManager.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPSManager.swift; sourceTree = "<group>"; };
+		AA00000100000000000000AB /* SensorFusionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorFusionEngine.swift; sourceTree = "<group>"; };
+		/* Phase 1 frameworks */
+		AA00000100000000000000BB /* ARKit.framework */        = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
+		AA00000100000000000000CB /* CoreMotion.framework */   = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
+		AA00000100000000000000DB /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
+		AA00000100000000000000EB /* Info.plist */             = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA00000100000000000000FB /* TerrainMapper.app */      = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TerrainMapper.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		/* Phase 2: Processing */
+		BB0000010000000000000001 /* TerrainTypes.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerrainTypes.swift; sourceTree = "<group>"; };
+		BB0000010000000000000002 /* OutlierDetector.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlierDetector.swift; sourceTree = "<group>"; };
+		BB0000010000000000000003 /* LoopClosureProcessor.swift */  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopClosureProcessor.swift; sourceTree = "<group>"; };
+		BB0000010000000000000004 /* GeoidCorrector.swift */        = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoidCorrector.swift; sourceTree = "<group>"; };
+		BB0000010000000000000005 /* TerrainInterpolator.swift */   = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerrainInterpolator.swift; sourceTree = "<group>"; };
+		BB0000010000000000000006 /* MeshGenerator.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshGenerator.swift; sourceTree = "<group>"; };
+		BB0000010000000000000007 /* ContourGenerator.swift */      = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContourGenerator.swift; sourceTree = "<group>"; };
+		BB0000010000000000000008 /* ProcessingPipeline.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingPipeline.swift; sourceTree = "<group>"; };
+		/* Phase 3: Views */
+		CC0000010000000000000001 /* AppSettings.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		CC0000010000000000000002 /* TiltMeterView.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiltMeterView.swift; sourceTree = "<group>"; };
+		CC0000010000000000000003 /* SurveyView.swift */            = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyView.swift; sourceTree = "<group>"; };
+		CC0000010000000000000004 /* ResultsView.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
+		CC0000010000000000000005 /* SettingsView.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		/* Phase 4: Export */
+		DD0000010000000000000001 /* PLYExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PLYExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000002 /* LASExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LASExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000003 /* GeoJSONExporter.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000004 /* GeoTIFFExporter.swift */       = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoTIFFExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000005 /* OBJExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OBJExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000006 /* CSVExporter.swift */           = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVExporter.swift; sourceTree = "<group>"; };
+		DD0000010000000000000007 /* ExportManager.swift */         = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportManager.swift; sourceTree = "<group>"; };
+		/* New frameworks */
+		EE0000010000000000000001 /* SceneKit.framework */          = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SceneKit.framework; path = System/Library/Frameworks/SceneKit.framework; sourceTree = SDKROOT; };
+		EE0000010000000000000002 /* MapKit.framework */            = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = System/Library/Frameworks/MapKit.framework; sourceTree = SDKROOT; };
+		/* Phase 5: Persistence + History */
+		FF000002000000000000001B /* SessionStore.swift */          = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		FF000002000000000000002B /* SessionHistoryView.swift */    = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryView.swift; sourceTree = "<group>"; };
+		/* Phase 6: Theme + PathTracking */
+		GG0000010000000000000001 /* Theme.swift */                 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		GG0000010000000000000002 /* PathTrackRecorder.swift */     = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathTrackRecorder.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA000001000000000000010A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00000100000000000000BA /* ARKit.framework in Frameworks */,
+				AA00000100000000000000CA /* CoreMotion.framework in Frameworks */,
+				AA00000100000000000000DA /* CoreLocation.framework in Frameworks */,
+				EE0000020000000000000001 /* SceneKit.framework in Frameworks */,
+				EE0000020000000000000002 /* MapKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		/* Root */
+		AA000001000000000000020A /* TerrainMapper */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000021A /* TerrainMapper */,
+				AA000001000000000000022A /* Frameworks */,
+				AA000001000000000000023A /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		/* App group */
+		AA000001000000000000021A /* TerrainMapper */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000001B /* TerrainMapperApp.swift */,
+				AA00000100000000000000EB /* Info.plist */,
+				AA000001000000000000024A /* Core */,
+				AA000001000000000000025A /* Views */,
+			);
+			path = TerrainMapper;
+			sourceTree = "<group>";
+		};
+		/* Core group */
+		AA000001000000000000024A /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000026A /* SensorFusion */,
+				AA000001000000000000027A /* Models */,
+				FF000001000000000000001A /* Processing */,
+				FF000001000000000000002A /* Export */,
+				FF000002000000000000003A /* Persistence */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		/* Persistence group */
+		FF000002000000000000003A /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				FF000002000000000000001B /* SessionStore.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		/* SensorFusion group */
+		AA000001000000000000026A /* SensorFusion */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000005B /* KalmanFilter.swift */,
+				AA000001000000000000006B /* BarometerManager.swift */,
+				AA000001000000000000007B /* LiDARManager.swift */,
+				AA000001000000000000008B /* IMUManager.swift */,
+				AA000001000000000000009B /* GPSManager.swift */,
+				AA00000100000000000000AB /* SensorFusionEngine.swift */,
+				GG0000010000000000000002 /* PathTrackRecorder.swift */,
+			);
+			path = SensorFusion;
+			sourceTree = "<group>";
+		};
+		/* Models group */
+		AA000001000000000000027A /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000003B /* SurveyPoint.swift */,
+				AA000001000000000000004B /* SurveySession.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		/* Processing group (new) */
+		FF000001000000000000001A /* Processing */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000010000000000000001 /* TerrainTypes.swift */,
+				BB0000010000000000000002 /* OutlierDetector.swift */,
+				BB0000010000000000000003 /* LoopClosureProcessor.swift */,
+				BB0000010000000000000004 /* GeoidCorrector.swift */,
+				BB0000010000000000000005 /* TerrainInterpolator.swift */,
+				BB0000010000000000000006 /* MeshGenerator.swift */,
+				BB0000010000000000000007 /* ContourGenerator.swift */,
+				BB0000010000000000000008 /* ProcessingPipeline.swift */,
+			);
+			path = Processing;
+			sourceTree = "<group>";
+		};
+		/* Export group (new) */
+		FF000001000000000000002A /* Export */ = {
+			isa = PBXGroup;
+			children = (
+				DD0000010000000000000001 /* PLYExporter.swift */,
+				DD0000010000000000000002 /* LASExporter.swift */,
+				DD0000010000000000000003 /* GeoJSONExporter.swift */,
+				DD0000010000000000000004 /* GeoTIFFExporter.swift */,
+				DD0000010000000000000005 /* OBJExporter.swift */,
+				DD0000010000000000000006 /* CSVExporter.swift */,
+				DD0000010000000000000007 /* ExportManager.swift */,
+			);
+			path = Export;
+			sourceTree = "<group>";
+		};
+		/* Views group (updated) */
+		AA000001000000000000025A /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				AA000001000000000000002B /* ContentView.swift */,
+				CC0000010000000000000001 /* AppSettings.swift */,
+				CC0000010000000000000002 /* TiltMeterView.swift */,
+				CC0000010000000000000003 /* SurveyView.swift */,
+				CC0000010000000000000004 /* ResultsView.swift */,
+				CC0000010000000000000005 /* SettingsView.swift */,
+				FF000002000000000000002B /* SessionHistoryView.swift */,
+				GG0000010000000000000001 /* Theme.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		/* Frameworks group (updated) */
+		AA000001000000000000022A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000100000000000000BB /* ARKit.framework */,
+				AA00000100000000000000CB /* CoreMotion.framework */,
+				AA00000100000000000000DB /* CoreLocation.framework */,
+				EE0000010000000000000001 /* SceneKit.framework */,
+				EE0000010000000000000002 /* MapKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		/* Products */
+		AA000001000000000000023A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000100000000000000FB /* TerrainMapper.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA000001000000000000030A /* TerrainMapper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA000001000000000000040A;
+			buildPhases = (
+				AA000001000000000000031A /* Sources */,
+				AA000001000000000000010A /* Frameworks */,
+				AA000001000000000000032A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TerrainMapper;
+			productName = TerrainMapper;
+			productReference = AA00000100000000000000FB /* TerrainMapper.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA000001000000000000050A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					AA000001000000000000030A = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = AA000001000000000000060A;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = AA000001000000000000020A;
+			productRefGroup = AA000001000000000000023A;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (AA000001000000000000030A);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA000001000000000000032A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA000001000000000000031A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				/* Phase 1 */
+				AA000001000000000000001A /* TerrainMapperApp.swift in Sources */,
+				AA000001000000000000002A /* ContentView.swift in Sources */,
+				AA000001000000000000003A /* SurveyPoint.swift in Sources */,
+				AA000001000000000000004A /* SurveySession.swift in Sources */,
+				AA000001000000000000005A /* KalmanFilter.swift in Sources */,
+				AA000001000000000000006A /* BarometerManager.swift in Sources */,
+				AA000001000000000000007A /* LiDARManager.swift in Sources */,
+				AA000001000000000000008A /* IMUManager.swift in Sources */,
+				AA000001000000000000009A /* GPSManager.swift in Sources */,
+				AA00000100000000000000AA /* SensorFusionEngine.swift in Sources */,
+				/* Phase 2 */
+				BB0000020000000000000001 /* TerrainTypes.swift in Sources */,
+				BB0000020000000000000002 /* OutlierDetector.swift in Sources */,
+				BB0000020000000000000003 /* LoopClosureProcessor.swift in Sources */,
+				BB0000020000000000000004 /* GeoidCorrector.swift in Sources */,
+				BB0000020000000000000005 /* TerrainInterpolator.swift in Sources */,
+				BB0000020000000000000006 /* MeshGenerator.swift in Sources */,
+				BB0000020000000000000007 /* ContourGenerator.swift in Sources */,
+				BB0000020000000000000008 /* ProcessingPipeline.swift in Sources */,
+				/* Phase 3 */
+				CC0000020000000000000001 /* AppSettings.swift in Sources */,
+				CC0000020000000000000002 /* TiltMeterView.swift in Sources */,
+				CC0000020000000000000003 /* SurveyView.swift in Sources */,
+				CC0000020000000000000004 /* ResultsView.swift in Sources */,
+				CC0000020000000000000005 /* SettingsView.swift in Sources */,
+				/* Phase 4 */
+				DD0000020000000000000001 /* PLYExporter.swift in Sources */,
+				DD0000020000000000000002 /* LASExporter.swift in Sources */,
+				DD0000020000000000000003 /* GeoJSONExporter.swift in Sources */,
+				DD0000020000000000000004 /* GeoTIFFExporter.swift in Sources */,
+				DD0000020000000000000005 /* OBJExporter.swift in Sources */,
+				DD0000020000000000000006 /* CSVExporter.swift in Sources */,
+				DD0000020000000000000007 /* ExportManager.swift in Sources */,
+				/* Phase 5 */
+				FF000002000000000000001A /* SessionStore.swift in Sources */,
+				FF000002000000000000002A /* SessionHistoryView.swift in Sources */,
+				/* Phase 6 */
+				GG0000020000000000000001 /* Theme.swift in Sources */,
+				GG0000020000000000000002 /* PathTrackRecorder.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA000001000000000000070A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)");
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA000001000000000000080A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA000001000000000000090A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TerrainMapper/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.terrainmapper.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AA0000010000000000000A0A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TerrainMapper/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.terrainmapper.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA000001000000000000060A /* Build configuration list for PBXProject "TerrainMapper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000001000000000000070A /* Debug */,
+				AA000001000000000000080A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA000001000000000000040A /* Build configuration list for PBXNativeTarget "TerrainMapper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000001000000000000090A /* Debug */,
+				AA0000010000000000000A0A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = AA000001000000000000050A /* Project object */;
+}
