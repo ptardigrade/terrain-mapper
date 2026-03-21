@@ -180,7 +180,8 @@ struct ARSurveyView: UIViewRepresentable {
             let hit     = origin + forward * centerDepth
 
             DispatchQueue.main.async { [weak self] in
-                guard let self, let scene = scnView.scene else { return }
+                guard let self else { return }
+                let scene = scnView.scene
                 if self.beaconNode == nil {
                     self.beaconNode = self.makeBeaconNode()
                     scene.rootNode.addChildNode(self.beaconNode!)
