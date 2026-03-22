@@ -30,6 +30,7 @@ enum SensorFusionError: LocalizedError {
     case stationaryGateTimeout
     case locationUnavailable
     case lidarCaptureFailed(Error)
+    case pointerTooFar(distance: Double)
 
     var errorDescription: String? {
         switch self {
@@ -42,7 +43,9 @@ enum SensorFusionError: LocalizedError {
         case .locationUnavailable:
             return "No GPS signal. Move to open sky, wait a moment, then try again."
         case .lidarCaptureFailed(let error):
-            return "LiDAR reading failed: \(error.localizedDescription). Try again or use the stick height fallback."
+            return "LiDAR reading failed: \(error.localizedDescription). Try again."
+        case .pointerTooFar(let distance):
+            return String(format: "Target is %.1f m away — move closer. Maximum range is 1.5 m for accurate readings.", distance)
         }
     }
 }
@@ -84,6 +87,11 @@ final class SensorFusionEngine: ObservableObject {
     /// Most recent path-track breadcrumb — observed by SurveyView to update
     /// the faint GPS trail rendered on the live map.
     @Published private(set) var latestPathTrackPoint: SurveyPoint?
+
+    /// AR mesh vertices (world space) extracted at end of session.
+    /// Used by the processing pipeline to augment the elevation model with
+    /// dense LiDAR mesh data.  Reset at next session start.
+    private(set) var lastSessionMeshVertices: [simd_float3] = []
 
     // MARK: - Private
 
@@ -157,17 +165,18 @@ final class SensorFusionEngine: ObservableObject {
     // MARK: - Session lifecycle
 
     /// Start all sensor streams and begin accumulating data.
-    func startSession(stickHeight: Double = 1.1, name: String = "") {
+    func startSession(name: String = "") {
         guard !isSessionActive else { return }
 
         kalman     = KalmanFilter()
         kalmanInitialised = false
         hasReliableGPSAltitude = false
-        session    = SurveySession(stickHeight: stickHeight, name: name)
+        session    = SurveySession(name: name)
         pointCount = 0
         isFirstCapture    = true
         arkitPositions    = [:]
         arkitAnchorHeading = nil
+        lastSessionMeshVertices = []
 
         imuManager.start()
         barometerManager.start()
@@ -196,6 +205,9 @@ final class SensorFusionEngine: ObservableObject {
         guard var s = session else {
             return SurveySession()
         }
+
+        // Extract AR mesh vertices BEFORE pausing the session (requires active ARSession).
+        lastSessionMeshVertices = lidarManager.extractMeshWorldVertices()
 
         imuManager.stop()
         barometerManager.stop()
@@ -254,12 +266,12 @@ final class SensorFusionEngine: ObservableObject {
         let baroDelta = barometerManager.currentRelativeAltitude
         kalman.predict(dt: 1.0, baroAltitudeDelta: baroDelta)
 
-        // ── Step 2b: Snapshot ARKit ground-hit position BEFORE LiDAR capture ──
-        // The LiDAR capture takes ~3 seconds.  Snapshot the beacon position now
+        // ── Step 2b: Snapshot AR pointer position BEFORE LiDAR capture ──
+        // The LiDAR capture takes ~3 seconds.  Snapshot the pointer position now
         // (after stationary gate, before LiDAR sampling) so the dot appears where
-        // the pointer was when the user tapped "Capture", not where the phone
+        // the user was pointing when they tapped "Capture", not where the phone
         // drifted to 3 seconds later.
-        let snapshotGroundHit = lidarManager.currentGroundHitPosition
+        let snapshotPointerPos = lidarManager.currentPointerPosition
         let snapshotCameraPos = lidarManager.currentWorldPosition
 
         // ── Step 3: Capture LiDAR distance ───────────────────────────────
@@ -275,6 +287,11 @@ final class SensorFusionEngine: ObservableObject {
             throw SensorFusionError.sessionNotStarted
         }
 
+        // ── Step 3b: Enforce 1.5 m maximum capture distance ─────────────
+        if lidarDistance > Double(LiDARManager.maxCaptureDistance) {
+            throw SensorFusionError.pointerTooFar(distance: lidarDistance)
+        }
+
         // ── Step 4: Get current GPS location ─────────────────────────────
         guard let location = gpsManager.currentLocation else {
             throw SensorFusionError.locationUnavailable
@@ -286,12 +303,10 @@ final class SensorFusionEngine: ObservableObject {
             kalman.updateGPS(altitude: location.altitude)
         }
 
-        // ── Step 5b: Record ARKit ground-hit position for VIO-based refinement ──
-        // Use the pre-capture snapshot so the dot appears at the beacon location
-        // when the user tapped Capture.  Prefer the ground-hit position (where
-        // the beacon/pointer is) over the camera position (directly above phone).
-        // Fall back to post-capture positions if snapshot was nil.
-        let groundHit = snapshotGroundHit ?? lidarManager.currentGroundHitPosition
+        // ── Step 5b: Record AR pointer position for VIO-based refinement ──
+        // Use the pre-capture snapshot so the dot appears at the pointer location
+        // when the user tapped Capture.  Fall back to post-capture positions.
+        let pointerPos = snapshotPointerPos ?? lidarManager.currentPointerPosition
         let cameraPos = snapshotCameraPos ?? lidarManager.currentWorldPosition
 
         // On the very first capture, record the compass heading to anchor the
@@ -311,10 +326,10 @@ final class SensorFusionEngine: ObservableObject {
         // Format: [x, z, y_ground] — pipeline uses [0]=x and [1]=z (unchanged);
         // ARSurveyView uses [2]=y_ground to place 3-D dot anchors.
         //
-        // Prefer the ground-hit position (beacon location) so the dot appears
-        // where the user was pointing, not where the phone was held.
-        if let hit = groundHit {
-            arkitPositions[pointID.uuidString] = [Double(hit.x), Double(hit.z), Double(hit.y)]
+        // Use the pointer position (where the user was aiming) so the dot appears
+        // at the aimed location, not directly under the phone.
+        if let ptr = pointerPos {
+            arkitPositions[pointID.uuidString] = [Double(ptr.x), Double(ptr.z), Double(ptr.y)]
         } else if let pos = cameraPos {
             // Fallback: camera position with estimated ground Y
             let groundY = Double(pos.y) - lidarDistance
@@ -355,7 +370,7 @@ final class SensorFusionEngine: ObservableObject {
         return removed
     }
 
-    /// Appends a manually-constructed explicit capture point (LiDAR / stick-height).
+    /// Appends a manually-constructed explicit capture point.
     func appendPoint(_ point: SurveyPoint) {
         session?.points.append(point)
         pointCount = session?.points.count ?? 0

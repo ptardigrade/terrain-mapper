@@ -100,13 +100,41 @@ final class LiDARManager: NSObject, ObservableObject {
         return simd_float3(col3.x, col3.y, col3.z)
     }
 
-    /// The ground point where the device's camera ray intersects the AR mesh
-    /// or estimated ground plane.  Used to place survey markers at the pointer
-    /// location rather than directly under the phone.
+    /// Maximum distance (metres) from device for a valid point capture.
+    /// Points beyond this distance are rejected to avoid sampling bad data.
+    static let maxCaptureDistance: Float = 1.5
+
+    /// The world-space position where the camera's optical axis hits the scene,
+    /// i.e. where the user's AR pointer/beacon is aimed.  Uses the center-pixel
+    /// depth from the LiDAR depth map projected along the camera forward vector.
     ///
-    /// Performs a raycast from the camera position straight down (-Y in world
-    /// space).  Falls back to projecting the camera position down by the most
-    /// recent median depth if no mesh hit is found.
+    /// Returns nil when no AR session is running, no depth data is available,
+    /// or the center depth is out of the valid range (0.1 – 8.0 m).
+    var currentPointerPosition: simd_float3? {
+        guard let session = arSession, let frame = session.currentFrame,
+              let depthMap = frame.sceneDepth?.depthMap else { return nil }
+
+        let w = CVPixelBufferGetWidth(depthMap)
+        let h = CVPixelBufferGetHeight(depthMap)
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+
+        let base = CVPixelBufferGetBaseAddress(depthMap)!
+            .assumingMemoryBound(to: Float32.self)
+        let bpr = CVPixelBufferGetBytesPerRow(depthMap)
+        let centerDepth = base[(h / 2) * (bpr / MemoryLayout<Float32>.size) + w / 2]
+
+        guard centerDepth > 0.1, centerDepth < 8.0 else { return nil }
+
+        let cam = frame.camera.transform
+        let forward = simd_float3(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
+        let origin = simd_float3(cam.columns.3.x, cam.columns.3.y, cam.columns.3.z)
+        return origin + forward * centerDepth
+    }
+
+    /// The ground point where the device's camera ray intersects the AR mesh
+    /// or estimated ground plane.  Used as fallback when pointer position is
+    /// unavailable.  Raycasts straight down (-Y) from the camera.
     var currentGroundHitPosition: simd_float3? {
         guard let session = arSession, let frame = session.currentFrame else { return nil }
         let camTransform = frame.camera.transform
@@ -114,7 +142,6 @@ final class LiDARManager: NSObject, ObservableObject {
                                  camTransform.columns.3.y,
                                  camTransform.columns.3.z)
 
-        // Raycast straight down from camera
         let query = ARRaycastQuery(origin: camPos,
                                    direction: simd_float3(0, -1, 0),
                                    allowing: .existingPlaneGeometry,
@@ -125,6 +152,85 @@ final class LiDARManager: NSObject, ObservableObject {
             return simd_float3(p.x, p.y, p.z)
         }
         return nil
+    }
+
+    /// Extracts all mesh vertices from the current AR session in world space.
+    /// Called before pausing the session so mesh data can feed the elevation model.
+    /// Only includes ground-facing triangles (normal.y > 0.5) and downsamples
+    /// to approximately one vertex per 5 cm grid cell.
+    func extractMeshWorldVertices() -> [simd_float3] {
+        guard let session = arSession, let frame = session.currentFrame else { return [] }
+        let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
+        guard !meshAnchors.isEmpty else { return [] }
+
+        // Spatial hash grid for downsampling (5 cm cells)
+        let cellSize: Float = 0.05
+        var gridBuckets: [SIMD2<Int32>: Float] = [:]   // (gridX, gridZ) → best Y
+
+        for anchor in meshAnchors {
+            let geo = anchor.geometry
+            let transform = anchor.transform
+            let vBuf = geo.vertices.buffer.contents().advanced(by: geo.vertices.offset)
+
+            // Read faces to identify ground-facing triangles
+            let fBuf = geo.faces.buffer.contents()
+            let bpi = geo.faces.bytesPerIndex
+            let icpp = geo.faces.indexCountPerPrimitive
+
+            // First pass: collect all vertices, marking ground-facing ones
+            var worldVerts: [simd_float3] = []
+            worldVerts.reserveCapacity(geo.vertices.count)
+            for i in 0..<geo.vertices.count {
+                let ptr = vBuf.advanced(by: i * geo.vertices.stride)
+                    .assumingMemoryBound(to: SIMD3<Float>.self)
+                let local = simd_float4(ptr.pointee.x, ptr.pointee.y, ptr.pointee.z, 1)
+                let world = transform * local
+                worldVerts.append(simd_float3(world.x, world.y, world.z))
+            }
+
+            var groundVertexIndices = Set<Int>()
+            for i in 0..<geo.faces.count {
+                let offset = i * icpp * bpi
+                let a, b, c: Int
+                if bpi == 4 {
+                    let ptr = fBuf.advanced(by: offset).assumingMemoryBound(to: UInt32.self)
+                    a = Int(ptr[0]); b = Int(ptr[1]); c = Int(ptr[2])
+                } else {
+                    let ptr = fBuf.advanced(by: offset).assumingMemoryBound(to: UInt16.self)
+                    a = Int(ptr[0]); b = Int(ptr[1]); c = Int(ptr[2])
+                }
+                guard a < worldVerts.count, b < worldVerts.count, c < worldVerts.count else { continue }
+                let va = worldVerts[a], vb = worldVerts[b], vc = worldVerts[c]
+                let edge1 = vb - va, edge2 = vc - va
+                let cross = simd_cross(edge1, edge2)
+                let len = simd_length(cross)
+                guard len > 1e-8 else { continue }
+                let normal = cross / len
+                guard normal.y > 0.5 else { continue }
+                groundVertexIndices.insert(a)
+                groundVertexIndices.insert(b)
+                groundVertexIndices.insert(c)
+            }
+
+            // Downsample: one vertex per grid cell, keep median-ish Y
+            for idx in groundVertexIndices {
+                let v = worldVerts[idx]
+                let gx = Int32(floor(v.x / cellSize))
+                let gz = Int32(floor(v.z / cellSize))
+                let key = SIMD2<Int32>(gx, gz)
+                // Keep lowest Y (closest to ground) per cell
+                if let existing = gridBuckets[key] {
+                    gridBuckets[key] = min(existing, v.y)
+                } else {
+                    gridBuckets[key] = v.y
+                }
+            }
+        }
+
+        // Convert grid back to world positions
+        return gridBuckets.map { (key, y) in
+            simd_float3(Float(key.x) * cellSize + cellSize * 0.5, y, Float(key.y) * cellSize + cellSize * 0.5)
+        }
     }
 
     // MARK: - Public API

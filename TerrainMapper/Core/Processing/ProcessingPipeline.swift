@@ -54,15 +54,19 @@ final class ProcessingPipeline: ObservableObject {
     ///
     /// - Parameter session: The completed survey session to process.
     /// - Returns: A `ProcessedTerrain` with all derived products.
-    func process(session: SurveySession) async -> ProcessedTerrain {
+    /// Run the full processing pipeline on `session` asynchronously.
+    ///
+    /// - Parameters:
+    ///   - session: The completed survey session to process.
+    ///   - arMeshVertices: AR mesh vertices as `[[x, y, z]]` in ARKit world space.
+    ///     These are converted to geographic coordinates and added as low-weight
+    ///     supplementary points for the interpolation grid.
+    /// - Returns: A `ProcessedTerrain` with all derived products.
+    func process(session: SurveySession, arMeshVertices: [[Float]] = []) async -> ProcessedTerrain {
         isProcessing = true
         progressMessage = "Starting…"
         let startTime = Date()
 
-        // Capture all configuration values on the MainActor before dispatching to
-        // a background thread.  Task.detached does not inherit the actor context, so
-        // accessing @MainActor-isolated properties inside the closure would be a data
-        // race.  Passing them as value-type constants is safe.
         let capturedContourInterval     = contourInterval
         let capturedGridResolution      = gridResolution
         let capturedInterpolationMethod = interpolationMethod
@@ -71,9 +75,8 @@ final class ProcessingPipeline: ObservableObject {
         let capturedElevationOffset     = elevationOffset
         let capturedArkitPositions      = session.arkitPositions
         let capturedArkitHeading        = session.arkitAnchorHeading
+        let capturedMeshVertices        = arMeshVertices
 
-        // ProgressSender lets the background pipeline post stage messages back to
-        // the @MainActor-isolated progressMessage property safely.
         let sender = ProgressSender(self)
 
         let result = await Task.detached(priority: .userInitiated) {
@@ -88,6 +91,7 @@ final class ProcessingPipeline: ObservableObject {
                 elevationOffset:       capturedElevationOffset,
                 arkitPositions:        capturedArkitPositions,
                 arkitAnchorHeading:    capturedArkitHeading,
+                arMeshVertices:        capturedMeshVertices,
                 updateProgress:        { msg in sender.send(msg) }
             )
         }.value
@@ -110,6 +114,7 @@ final class ProcessingPipeline: ObservableObject {
         elevationOffset:      Double,
         arkitPositions:       [String: [Double]]?,
         arkitAnchorHeading:   Double?,
+        arMeshVertices:       [[Float]],
         updateProgress:       (String) -> Void
     ) -> ProcessedTerrain {
         var points = session.points
@@ -200,9 +205,22 @@ final class ProcessingPipeline: ObservableObject {
             }
         }
 
+        // ── 4c. Integrate AR mesh vertices as supplementary points ────────
+        var validPoints = points.filter { !$0.isOutlier }
+        if !arMeshVertices.isEmpty,
+           let ark = arkitPositions, let heading = arkitAnchorHeading {
+            updateProgress("Integrating AR mesh data…")
+            let meshPts = convertMeshVerticesToPoints(
+                vertices: arMeshVertices,
+                arkitPositions: ark,
+                capturedPoints: points,
+                anchorHeadingDeg: heading
+            )
+            validPoints.append(contentsOf: meshPts)
+        }
+
         // ── 5. Interpolation → grid ───────────────────────────────────────
         updateProgress("Interpolating terrain grid…")
-        let validPoints = points.filter { !$0.isOutlier }
         var interp = TerrainInterpolator()
         interp.gridResolutionMeters = gridResolution
         let grid = interp.interpolate(
@@ -319,6 +337,86 @@ final class ProcessingPipeline: ObservableObject {
                 interpolationWeight: p.interpolationWeight
             )
         }
+    }
+
+    // MARK: - AR mesh → geographic point conversion
+
+    /// Converts ARKit world-space mesh vertices to geographic SurveyPoints.
+    ///
+    /// Uses the same rotation + centroid anchoring as `arkitRefinePositions`
+    /// to map XZ → lat/lon, and computes a Y→elevation offset from the
+    /// captured points that have both ARKit positions and corrected elevations.
+    /// Mesh-derived points receive a low interpolation weight (0.3) so they
+    /// supplement — not dominate — the real captured survey points.
+    private nonisolated static func convertMeshVerticesToPoints(
+        vertices: [[Float]],
+        arkitPositions: [String: [Double]],
+        capturedPoints: [SurveyPoint],
+        anchorHeadingDeg: Double
+    ) -> [SurveyPoint] {
+        let arkPoints = capturedPoints.filter {
+            !$0.isOutlier && arkitPositions[$0.id.uuidString] != nil
+        }
+        guard arkPoints.count >= 2 else { return [] }
+
+        // ARKit centroid + mean ARKit Y and mean corrected elevation
+        var arkCentX = 0.0, arkCentZ = 0.0, arkCentY = 0.0, elevSum = 0.0
+        for p in arkPoints {
+            let pos = arkitPositions[p.id.uuidString]!
+            arkCentX += pos[0]
+            arkCentZ += pos[1]
+            arkCentY += pos.count > 2 ? pos[2] : -1.2
+            elevSum  += p.groundElevation
+        }
+        let n = Double(arkPoints.count)
+        arkCentX /= n; arkCentZ /= n; arkCentY /= n; elevSum /= n
+
+        // Y offset: correctedElevation ≈ arkitY + yOffset
+        let yOffset = elevSum - arkCentY
+
+        // GPS centroid (geographic anchor)
+        let gpsCentLat = capturedPoints.map(\.latitude).reduce(0, +) / Double(capturedPoints.count)
+        let gpsCentLon = capturedPoints.map(\.longitude).reduce(0, +) / Double(capturedPoints.count)
+
+        let θ = anchorHeadingDeg * .pi / 180.0
+        let cosθ = cos(θ), sinθ = sin(θ)
+        let R = 6_371_000.0
+
+        var result: [SurveyPoint] = []
+        result.reserveCapacity(vertices.count)
+
+        for v in vertices {
+            guard v.count >= 3 else { continue }
+            let x = Double(v[0]), y = Double(v[1]), z = Double(v[2])
+
+            let Δx = x - arkCentX
+            let Δz = z - arkCentZ
+            let ΔEast  =  Δx * cosθ  + Δz * (-sinθ)
+            let ΔNorth =  Δx * (-sinθ) + Δz * (-cosθ)
+            let lat = gpsCentLat + ΔNorth / R * (180.0 / .pi)
+            let lon = gpsCentLon + ΔEast / (R * cos(gpsCentLat * .pi / 180.0)) * (180.0 / .pi)
+            let elev = y + yOffset
+
+            result.append(SurveyPoint(
+                id:                  UUID(),
+                timestamp:           Date(),
+                latitude:            lat,
+                longitude:           lon,
+                fusedAltitude:       elev,
+                groundElevation:     elev,
+                lidarDistance:       0,
+                gpsAltitude:         0,
+                baroAltitudeDelta:   0,
+                tiltAngle:           0,
+                horizontalAccuracy:  0.05,
+                verticalAccuracy:    0.05,
+                isOutlier:           false,
+                captureType:         .lidar,
+                interpolationWeight: 0.3
+            ))
+        }
+
+        return result
     }
 
     // MARK: - PDR refinement (static — safe to call from background thread)

@@ -23,7 +23,6 @@ struct SettingsView: View {
                 }
                 .padding(.top, 16)
 
-                sectionGroup("Survey")         { surveyCard }
                 sectionGroup("Processing")     { processingCard }
                 sectionGroup("Elevation Calibration") { calibrationCard }
                 sectionGroup("Export Formats") { exportCard }
@@ -71,44 +70,6 @@ struct SettingsView: View {
         Rectangle()
             .fill(Theme.surfaceContainerHigh)
             .frame(height: 1)
-    }
-
-    // MARK: - Survey card
-
-    private var surveyCard: some View {
-        card {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    settingLabel("Stick Height")
-                    Text("Standard vertical offset from GNSS antenna")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.onSurfaceVariant)
-                }
-                Spacer()
-                HStack(spacing: 6) {
-                    HStack(spacing: 4) {
-                        TextField("m", value: $settings.stickHeight,
-                                  format: .number.precision(.fractionLength(2)))
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 70)
-                            .font(.system(.body, design: .monospaced, weight: .semibold))
-                            .foregroundStyle(Theme.primary)
-                        Text("m")
-                            .font(.caption)
-                            .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Theme.surfaceContainerHigh, in: RoundedRectangle(cornerRadius: 8))
-
-                    InfoButton(
-                        title: "Stick Height",
-                        message: "The measured height of your pole or staff above the ground. Used to calculate ground elevation when the LiDAR scanner can't read the surface directly. Must match the physical stick you're using."
-                    )
-                }
-            }
-        }
     }
 
     // MARK: - Processing card

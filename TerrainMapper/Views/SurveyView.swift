@@ -45,7 +45,7 @@ struct SurveyView: View {
     @State private var showError:              Bool = false
     @State private var elapsedSeconds:         Int = 0
     @State private var sessionStarted:         Bool = false
-    @State private var showLiDARFallbackAlert: Bool = false
+    // LiDAR fallback removed — stick height concept no longer used
     @State private var showEndWarning:         Bool = false
     @State private var sessionName:            String = ""
     @State private var showNameSheet:          Bool   = false
@@ -120,14 +120,6 @@ struct SurveyView: View {
         .alert("Capture Error", isPresented: $showError, presenting: captureError) { _ in
             Button("OK", role: .cancel) {}
         } message: { msg in Text(msg) }
-        .alert("LiDAR Unavailable", isPresented: $showLiDARFallbackAlert) {
-            Button("Use Stick Height") {
-                Task { await captureWithStickHeight() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("LiDAR couldn't measure this surface — it may be too reflective or in direct sunlight. Tap 'Use Stick Height' to record the point using your \(String(format: "%.1f", settings.stickHeight)) m stick measurement instead.")
-        }
         .alert("Too Few Points", isPresented: $showEndWarning) {
             Button("End Anyway", role: .destructive) { endSession() }
             Button("Keep Surveying", role: .cancel) {}
@@ -580,7 +572,7 @@ struct SurveyView: View {
         capturedPoints = []
         elapsedSeconds = 0
         elevMin = 0; elevMax = 1
-        engine.startSession(stickHeight: settings.stickHeight, name: sessionName)
+        engine.startSession(name: sessionName)
         sessionStarted = true
     }
 
@@ -640,58 +632,11 @@ struct SurveyView: View {
             // Update telemetry elevation range using differential-corrected values
             updateCorrectedElevationRange()
 
-        } catch SensorFusionError.lidarCaptureFailed(let inner) {
-            if case LiDARError.depthDataUnavailable = inner {
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
-                showLiDARFallbackAlert = true
-                return
-            }
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
-            captureError = SensorFusionError.lidarCaptureFailed(inner).localizedDescription
-            showError = true
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             captureError = error.localizedDescription
             showError    = true
         }
-    }
-
-    private func captureWithStickHeight() async {
-        guard !isCapturing else { return }
-        isCapturing = true
-        defer { isCapturing = false }
-
-        guard let location = engine.gpsManager.currentLocation else {
-            captureError = "No GPS location available."
-            showError = true
-            return
-        }
-        let fusedAlt   = engine.currentAltitude
-        let groundElev = fusedAlt - settings.stickHeight
-        let point = SurveyPoint(
-            id:                  UUID(),
-            timestamp:           Date(),
-            latitude:            location.coordinate.latitude,
-            longitude:           location.coordinate.longitude,
-            fusedAltitude:       fusedAlt,
-            groundElevation:     groundElev,
-            lidarDistance:       settings.stickHeight,
-            gpsAltitude:         location.altitude,
-            baroAltitudeDelta:   engine.barometerManager.currentRelativeAltitude,
-            tiltAngle:           engine.imuManager.tiltAngle,
-            horizontalAccuracy:  location.horizontalAccuracy,
-            verticalAccuracy:    max(location.verticalAccuracy, 0),
-            captureType:         .stickHeight
-        )
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        engine.appendPoint(point)
-        capturedPoints.append(point)
-        showCaptureToast(elevation: point.groundElevation)
-
-        if let snapshot = engine.currentSessionSnapshot {
-            sessionStore.save(session: snapshot)
-        }
-        updateCorrectedElevationRange()
     }
 
     // MARK: - Flashlight

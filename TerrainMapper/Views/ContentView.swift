@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import simd
 
 struct ContentView: View {
     @EnvironmentObject private var engine:   SensorFusionEngine
@@ -96,8 +97,14 @@ struct ContentView: View {
         // Switch to the Results tab so the user sees processing progress.
         selectedTab = 1
 
+        // Convert AR mesh vertices (simd_float3) to plain Float arrays
+        // for Sendable-safe transfer to the background processing task.
+        let meshVerts: [[Float]] = engine.lastSessionMeshVertices.map { v in
+            [v.x, v.y, v.z]
+        }
+
         Task {
-            let terrain = await pipeline.process(session: session)
+            let terrain = await pipeline.process(session: session, arMeshVertices: meshVerts)
             processedTerrain = terrain
             isProcessing = false
         }

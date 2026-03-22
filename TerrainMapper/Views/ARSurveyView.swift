@@ -90,26 +90,17 @@ struct ARSurveyView: UIViewRepresentable {
         // MARK: - Overlay nodes
 
         fileprivate var contourLinesNode: SCNNode?
+        fileprivate var surveyedMeshNode: SCNNode?
 
-        // MARK: - Mesh contour throttle state
+        /// XZ positions (ARKit world space) of captured survey points.
+        /// Updated every time updatePoints is called; used to compute the
+        /// 2D convex hull that clips the white surveyed-area mesh & contours.
+        fileprivate var capturedXZPositions: [simd_float2] = []
 
-        private var lastMeshContourTime: TimeInterval = 0
-        private var isComputingContours: Bool = false
+        // MARK: - Overlay throttle state
 
-        // MARK: - Mesh wireframe material (reused across all mesh anchor nodes)
-
-        private let meshWireframeMaterial: SCNMaterial = {
-            let mat = SCNMaterial()
-            mat.fillMode = .lines
-            mat.diffuse.contents = UIColor(red: 0.25, green: 0.95, blue: 0.65, alpha: 0.55)
-            mat.emission.contents = UIColor(red: 0.25, green: 0.95, blue: 0.65, alpha: 0.7)
-            mat.emission.intensity = 0.8
-            mat.lightingModel = .constant
-            mat.isDoubleSided = true
-            mat.readsFromDepthBuffer = true
-            mat.writesToDepthBuffer = false
-            return mat
-        }()
+        private var lastOverlayTime: TimeInterval = 0
+        private var isComputingOverlay: Bool = false
 
         // MARK: - Point management
 
@@ -129,6 +120,9 @@ struct ARSurveyView: UIViewRepresentable {
             beaconNode = nil
             contourLinesNode?.removeFromParentNode()
             contourLinesNode = nil
+            surveyedMeshNode?.removeFromParentNode()
+            surveyedMeshNode = nil
+            capturedXZPositions.removeAll()
         }
 
         func updatePoints(
@@ -190,69 +184,44 @@ struct ARSurveyView: UIViewRepresentable {
                     }
                 }
             }
+
+            // Rebuild XZ positions for convex hull clipping
+            capturedXZPositions = points.compactMap { p in
+                let key = p.id.uuidString
+                guard let pos = arkitPositions[key], pos.count >= 2 else { return nil }
+                return simd_float2(Float(pos[0]), Float(pos[1]))
+            }
         }
 
         // MARK: - ARSCNViewDelegate
 
         func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
             updateBeacon(renderer: renderer)
-            updateMeshContours(renderer: renderer, time: time)
+            updateSurveyedAreaOverlay(renderer: renderer, time: time)
         }
 
-        /// Provide a wireframe node for each ARMeshAnchor added by ARKit's
-        /// scene reconstruction.  This is the "3D scanner app" overlay that
-        /// grows as the user scans more of the environment.
+        /// Return empty nodes for mesh anchors — we render our own
+        /// surveyed-area mesh clipped to the convex hull of captured points.
         func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
-            guard let meshAnchor = anchor as? ARMeshAnchor else { return nil }
-            let node = SCNNode()
-            node.geometry = Self.makeMeshWireframeGeometry(from: meshAnchor)
-            node.geometry?.materials = [meshWireframeMaterial]
-            node.renderingOrder = 0   // Render as AR overlay on camera feed
-            return node
+            guard anchor is ARMeshAnchor else { return nil }
+            return SCNNode()  // empty — keeps anchor tracked but invisible
         }
 
-        /// Update the wireframe geometry when ARKit refines the mesh.
+        /// No per-anchor wireframe — surveyed-area mesh is rebuilt periodically.
         func renderer(_ renderer: SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
-            guard let meshAnchor = anchor as? ARMeshAnchor else { return }
-            node.geometry = Self.makeMeshWireframeGeometry(from: meshAnchor)
-            node.geometry?.materials = [meshWireframeMaterial]
-            node.renderingOrder = 0
+            // intentionally empty
         }
 
-        // MARK: - Mesh wireframe geometry
+        // MARK: - Surveyed-area overlay (white mesh + white thick contours)
 
-        /// Creates SCNGeometry from an ARMeshAnchor using Metal buffer pass-through.
-        /// The triangles are rendered as wireframe via the material's fillMode = .lines.
-        private static func makeMeshWireframeGeometry(from meshAnchor: ARMeshAnchor) -> SCNGeometry {
-            let geo = meshAnchor.geometry
-
-            let vertexSource = SCNGeometrySource(
-                buffer: geo.vertices.buffer,
-                vertexFormat: geo.vertices.format,
-                semantic: .vertex,
-                vertexCount: geo.vertices.count,
-                dataOffset: geo.vertices.offset,
-                dataStride: geo.vertices.stride
-            )
-
-            let faceElement = SCNGeometryElement(
-                buffer: geo.faces.buffer,
-                primitiveType: .triangles,
-                primitiveCount: geo.faces.count,
-                bytesPerIndex: geo.faces.bytesPerIndex
-            )
-
-            return SCNGeometry(sources: [vertexSource], elements: [faceElement])
-        }
-
-        // MARK: - Mesh-based contour lines
-
-        /// Periodically computes elevation contour iso-lines from all ARKit mesh
-        /// anchors.  Heavy work is dispatched to a background queue.
-        private func updateMeshContours(renderer: SCNSceneRenderer, time: TimeInterval) {
-            guard !isComputingContours,
-                  time - lastMeshContourTime > 2.0 else { return }
-            lastMeshContourTime = time
+        /// Periodically extracts mesh triangles inside the convex hull of captured
+        /// points, then renders a white wireframe mesh and thick white contour
+        /// ribbons.  All heavy work runs on a background queue.
+        private func updateSurveyedAreaOverlay(renderer: SCNSceneRenderer, time: TimeInterval) {
+            guard !isComputingOverlay,
+                  time - lastOverlayTime > 2.0,
+                  capturedXZPositions.count >= 3 else { return }
+            lastOverlayTime = time
 
             guard let scnView = renderer as? ARSCNView,
                   let frame = scnView.session.currentFrame else { return }
@@ -260,22 +229,37 @@ struct ARSurveyView: UIViewRepresentable {
             let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
             guard !meshAnchors.isEmpty else { return }
 
-            isComputingContours = true
+            let hullPts = capturedXZPositions
+            isComputingOverlay = true
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let geometry = Self.computeMeshContourGeometry(from: meshAnchors)
+                let hull = Self.convexHull2D(hullPts)
+                let expanded = Self.expandedHull(hull, by: 0.3)  // 30 cm buffer
+                let (meshGeo, contourGeo) = Self.computeSurveyedAreaGeometry(
+                    from: meshAnchors, hull: expanded
+                )
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self, let scene = self.sceneView?.scene else {
-                        self?.isComputingContours = false
+                        self?.isComputingOverlay = false
                         return
                     }
-                    self.isComputingContours = false
+                    self.isComputingOverlay = false
 
-                    self.contourLinesNode?.removeFromParentNode()
-                    if let geo = geometry {
+                    // Replace surveyed-area mesh
+                    self.surveyedMeshNode?.removeFromParentNode()
+                    if let geo = meshGeo {
                         let node = SCNNode(geometry: geo)
-                        node.renderingOrder = 2  // Above mesh wireframe (0) and point markers (1)
+                        node.renderingOrder = 0
+                        scene.rootNode.addChildNode(node)
+                        self.surveyedMeshNode = node
+                    }
+
+                    // Replace contour lines
+                    self.contourLinesNode?.removeFromParentNode()
+                    if let geo = contourGeo {
+                        let node = SCNNode(geometry: geo)
+                        node.renderingOrder = 2
                         scene.rootNode.addChildNode(node)
                         self.contourLinesNode = node
                     }
@@ -283,14 +267,21 @@ struct ARSurveyView: UIViewRepresentable {
             }
         }
 
-        /// Computes contour iso-lines by marching through all ground-facing mesh
-        /// triangles in world space.  Called on a background queue.
-        private static func computeMeshContourGeometry(from anchors: [ARMeshAnchor]) -> SCNGeometry? {
+        // MARK: - Surveyed-area geometry computation (background queue)
+
+        private static func computeSurveyedAreaGeometry(
+            from anchors: [ARMeshAnchor],
+            hull: [simd_float2]
+        ) -> (mesh: SCNGeometry?, contours: SCNGeometry?) {
+
             struct WorldTri {
                 let a: simd_float3, b: simd_float3, c: simd_float3
             }
 
+            // ── Extract ground-facing triangles inside the hull ──────────
             var triangles: [WorldTri] = []
+            var allVerts: [simd_float3] = []   // for wireframe
+            var allIndices: [UInt32] = []
             var yMin: Float = .greatestFiniteMagnitude
             var yMax: Float = -.greatestFiniteMagnitude
 
@@ -298,7 +289,6 @@ struct ARSurveyView: UIViewRepresentable {
                 let geo = anchor.geometry
                 let transform = anchor.transform
 
-                // Read vertices into world space
                 let vBuf = geo.vertices.buffer.contents().advanced(by: geo.vertices.offset)
                 var verts: [simd_float3] = []
                 verts.reserveCapacity(geo.vertices.count)
@@ -311,10 +301,10 @@ struct ARSurveyView: UIViewRepresentable {
                     verts.append(simd_float3(world.x, world.y, world.z))
                 }
 
-                // Read faces, keep only ground-facing triangles (normal Y > 0.5)
                 let fBuf = geo.faces.buffer.contents()
                 let bpi = geo.faces.bytesPerIndex
                 let icpp = geo.faces.indexCountPerPrimitive
+
                 for i in 0..<geo.faces.count {
                     let offset = i * icpp * bpi
                     let a, b, c: Int
@@ -329,7 +319,7 @@ struct ARSurveyView: UIViewRepresentable {
 
                     let va = verts[a], vb = verts[b], vc = verts[c]
 
-                    // Only ground-facing triangles
+                    // Ground-facing check
                     let edge1 = vb - va, edge2 = vc - va
                     let cross = simd_cross(edge1, edge2)
                     let len = simd_length(cross)
@@ -337,105 +327,234 @@ struct ARSurveyView: UIViewRepresentable {
                     let normal = cross / len
                     guard normal.y > 0.5 else { continue }
 
+                    // Centroid inside hull check (XZ plane)
+                    let cx = (va.x + vb.x + vc.x) / 3.0
+                    let cz = (va.z + vb.z + vc.z) / 3.0
+                    guard pointInConvexHull(simd_float2(cx, cz), hull: hull) else { continue }
+
                     triangles.append(WorldTri(a: va, b: vb, c: vc))
+
+                    let base = UInt32(allVerts.count)
+                    allVerts.append(va)
+                    allVerts.append(vb)
+                    allVerts.append(vc)
+                    allIndices.append(base)
+                    allIndices.append(base + 1)
+                    allIndices.append(base + 2)
+
                     yMin = Swift.min(yMin, va.y, vb.y, vc.y)
                     yMax = Swift.max(yMax, va.y, vb.y, vc.y)
                 }
             }
 
-            guard !triangles.isEmpty else { return nil }
-
-            let range = yMax - yMin
-            guard range > 0.005 else { return nil }
-
-            // Adaptive contour interval
-            let interval: Float
-            if range < 0.1 { interval = 0.02 }
-            else if range < 0.3 { interval = 0.05 }
-            else if range < 1.0 { interval = 0.1 }
-            else if range < 3.0 { interval = 0.25 }
-            else if range < 8.0 { interval = 0.5 }
-            else { interval = 1.0 }
-
-            // March through triangles for elevation crossings
-            var contourVerts: [SCNVector3] = []
-            var contourColors: [SCNVector3] = []
-            var contourIndices: [UInt32] = []
-            var idx: UInt32 = 0
-
-            var level = (yMin / interval).rounded(.up) * interval
-            while level <= yMax {
-                let frac = Double((level - yMin) / (yMax - yMin))
-                let rgb = viridisRGBStatic(fraction: frac)
-
-                for tri in triangles {
-                    let pts = [tri.a, tri.b, tri.c]
-                    var crossings: [simd_float3] = []
-
-                    for ei in 0..<3 {
-                        let ej = (ei + 1) % 3
-                        let e0 = pts[ei].y, e1 = pts[ej].y
-                        guard (e0 - level) * (e1 - level) < 0 else { continue }
-                        let t = (level - e0) / (e1 - e0)
-                        crossings.append(pts[ei] + t * (pts[ej] - pts[ei]))
-                    }
-
-                    if crossings.count == 2 {
-                        contourVerts.append(SCNVector3(crossings[0].x, crossings[0].y, crossings[0].z))
-                        contourVerts.append(SCNVector3(crossings[1].x, crossings[1].y, crossings[1].z))
-                        contourColors.append(rgb)
-                        contourColors.append(rgb)
-                        contourIndices.append(idx); contourIndices.append(idx + 1)
-                        idx += 2
-                    }
-                }
-                level += interval
+            // ── Build white wireframe mesh geometry ──────────────────────
+            var meshGeometry: SCNGeometry?
+            if !allVerts.isEmpty {
+                let vertexData = Data(bytes: allVerts, count: allVerts.count * MemoryLayout<simd_float3>.size)
+                let vertexSource = SCNGeometrySource(
+                    data: vertexData,
+                    semantic: .vertex,
+                    vectorCount: allVerts.count,
+                    usesFloatComponents: true,
+                    componentsPerVector: 3,
+                    bytesPerComponent: MemoryLayout<Float>.size,
+                    dataOffset: 0,
+                    dataStride: MemoryLayout<simd_float3>.size
+                )
+                let indexData = Data(bytes: allIndices, count: allIndices.count * MemoryLayout<UInt32>.size)
+                let element = SCNGeometryElement(
+                    data: indexData,
+                    primitiveType: .triangles,
+                    primitiveCount: allIndices.count / 3,
+                    bytesPerIndex: MemoryLayout<UInt32>.size
+                )
+                let geo = SCNGeometry(sources: [vertexSource], elements: [element])
+                let mat = SCNMaterial()
+                mat.fillMode = .lines
+                mat.diffuse.contents = UIColor(white: 1.0, alpha: 0.45)
+                mat.emission.contents = UIColor(white: 1.0, alpha: 0.6)
+                mat.emission.intensity = 0.8
+                mat.lightingModel = .constant
+                mat.isDoubleSided = true
+                mat.readsFromDepthBuffer = true
+                mat.writesToDepthBuffer = false
+                geo.materials = [mat]
+                meshGeometry = geo
             }
 
-            guard !contourVerts.isEmpty else { return nil }
+            // ── Build white contour ribbon geometry ──────────────────────
+            var contourGeometry: SCNGeometry?
+            if !triangles.isEmpty {
+                let range = yMax - yMin
+                if range > 0.005 {
+                    let interval: Float
+                    if range < 0.1 { interval = 0.02 }
+                    else if range < 0.3 { interval = 0.05 }
+                    else if range < 1.0 { interval = 0.1 }
+                    else if range < 3.0 { interval = 0.25 }
+                    else if range < 8.0 { interval = 0.5 }
+                    else { interval = 1.0 }
 
-            let vertexData = Data(bytes: contourVerts, count: contourVerts.count * MemoryLayout<SCNVector3>.size)
+                    // Collect contour line segments
+                    var segments: [(simd_float3, simd_float3)] = []
+                    var level = (yMin / interval).rounded(.up) * interval
+                    while level <= yMax {
+                        for tri in triangles {
+                            let pts = [tri.a, tri.b, tri.c]
+                            var crossings: [simd_float3] = []
+                            for ei in 0..<3 {
+                                let ej = (ei + 1) % 3
+                                let e0 = pts[ei].y, e1 = pts[ej].y
+                                guard (e0 - level) * (e1 - level) < 0 else { continue }
+                                let t = (level - e0) / (e1 - e0)
+                                crossings.append(pts[ei] + t * (pts[ej] - pts[ei]))
+                            }
+                            if crossings.count == 2 {
+                                segments.append((crossings[0], crossings[1]))
+                            }
+                        }
+                        level += interval
+                    }
+
+                    if !segments.isEmpty {
+                        contourGeometry = makeContourRibbonGeometry(segments: segments)
+                    }
+                }
+            }
+
+            return (meshGeometry, contourGeometry)
+        }
+
+        /// Builds thick contour lines as flat ribbon quads (two triangles per
+        /// segment).  Each ribbon lies on the terrain surface with a configurable
+        /// width, giving the appearance of thick lines — SceneKit .line primitives
+        /// are always 1 pixel regardless of distance.
+        private static func makeContourRibbonGeometry(segments: [(simd_float3, simd_float3)]) -> SCNGeometry {
+            let halfWidth: Float = 0.012  // 12 mm half-width → 24 mm total (~3× mesh line)
+            let up = simd_float3(0, 1, 0)
+
+            var verts: [simd_float3] = []
+            var indices: [UInt32] = []
+            verts.reserveCapacity(segments.count * 4)
+            indices.reserveCapacity(segments.count * 6)
+
+            for (p0, p1) in segments {
+                let dir = p1 - p0
+                let len = simd_length(dir)
+                guard len > 1e-6 else { continue }
+
+                let fwd = dir / len
+                var perp = simd_cross(fwd, up)
+                let perpLen = simd_length(perp)
+                if perpLen < 1e-6 {
+                    // Segment is vertical — use arbitrary perpendicular
+                    perp = simd_float3(1, 0, 0) * halfWidth
+                } else {
+                    perp = (perp / perpLen) * halfWidth
+                }
+
+                // Lift ribbon slightly above surface to prevent z-fighting
+                let lift = simd_float3(0, 0.003, 0)
+
+                let base = UInt32(verts.count)
+                verts.append(p0 - perp + lift)
+                verts.append(p0 + perp + lift)
+                verts.append(p1 - perp + lift)
+                verts.append(p1 + perp + lift)
+
+                // Two triangles for the quad
+                indices.append(base)
+                indices.append(base + 1)
+                indices.append(base + 2)
+                indices.append(base + 1)
+                indices.append(base + 3)
+                indices.append(base + 2)
+            }
+
+            let vertexData = Data(bytes: verts, count: verts.count * MemoryLayout<simd_float3>.size)
             let vertexSource = SCNGeometrySource(
                 data: vertexData,
                 semantic: .vertex,
-                vectorCount: contourVerts.count,
+                vectorCount: verts.count,
                 usesFloatComponents: true,
                 componentsPerVector: 3,
                 bytesPerComponent: MemoryLayout<Float>.size,
                 dataOffset: 0,
-                dataStride: MemoryLayout<SCNVector3>.size
+                dataStride: MemoryLayout<simd_float3>.size
             )
-
-            let colorData = Data(bytes: contourColors, count: contourColors.count * MemoryLayout<SCNVector3>.size)
-            let colorSource = SCNGeometrySource(
-                data: colorData,
-                semantic: .color,
-                vectorCount: contourColors.count,
-                usesFloatComponents: true,
-                componentsPerVector: 3,
-                bytesPerComponent: MemoryLayout<Float>.size,
-                dataOffset: 0,
-                dataStride: MemoryLayout<SCNVector3>.size
-            )
-
-            let indexData = Data(bytes: contourIndices, count: contourIndices.count * MemoryLayout<UInt32>.size)
+            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
             let element = SCNGeometryElement(
                 data: indexData,
-                primitiveType: .line,
-                primitiveCount: contourIndices.count / 2,
+                primitiveType: .triangles,
+                primitiveCount: indices.count / 3,
                 bytesPerIndex: MemoryLayout<UInt32>.size
             )
 
-            let geometry = SCNGeometry(sources: [vertexSource, colorSource], elements: [element])
-            let material = SCNMaterial()
-            material.lightingModel = .constant
-            material.isDoubleSided = true
-            material.emission.intensity = 1.0
-            material.readsFromDepthBuffer = true
-            material.writesToDepthBuffer = false
-            geometry.materials = [material]
+            let geo = SCNGeometry(sources: [vertexSource], elements: [element])
+            let mat = SCNMaterial()
+            mat.diffuse.contents = UIColor(white: 1.0, alpha: 0.85)
+            mat.emission.contents = UIColor(white: 1.0, alpha: 0.9)
+            mat.emission.intensity = 1.0
+            mat.lightingModel = .constant
+            mat.isDoubleSided = true
+            mat.readsFromDepthBuffer = true
+            mat.writesToDepthBuffer = false
+            geo.materials = [mat]
+            return geo
+        }
 
-            return geometry
+        // MARK: - 2D convex hull (Andrew's monotone chain)
+
+        private static func convexHull2D(_ points: [simd_float2]) -> [simd_float2] {
+            guard points.count >= 3 else { return points }
+            let sorted = points.sorted { $0.x < $1.x || ($0.x == $1.x && $0.y < $1.y) }
+
+            var lower: [simd_float2] = []
+            for p in sorted {
+                while lower.count >= 2 && cross2D(lower[lower.count - 2], lower[lower.count - 1], p) <= 0 {
+                    lower.removeLast()
+                }
+                lower.append(p)
+            }
+
+            var upper: [simd_float2] = []
+            for p in sorted.reversed() {
+                while upper.count >= 2 && cross2D(upper[upper.count - 2], upper[upper.count - 1], p) <= 0 {
+                    upper.removeLast()
+                }
+                upper.append(p)
+            }
+
+            lower.removeLast()
+            upper.removeLast()
+            return lower + upper
+        }
+
+        private static func cross2D(_ o: simd_float2, _ a: simd_float2, _ b: simd_float2) -> Float {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+
+        private static func pointInConvexHull(_ p: simd_float2, hull: [simd_float2]) -> Bool {
+            guard hull.count >= 3 else { return false }
+            for i in 0..<hull.count {
+                let j = (i + 1) % hull.count
+                if cross2D(hull[i], hull[j], p) < 0 { return false }
+            }
+            return true
+        }
+
+        /// Expands hull outward from its centroid by a fixed distance.
+        private static func expandedHull(_ hull: [simd_float2], by amount: Float) -> [simd_float2] {
+            guard hull.count >= 3 else { return hull }
+            let cx = hull.reduce(Float(0)) { $0 + $1.x } / Float(hull.count)
+            let cy = hull.reduce(Float(0)) { $0 + $1.y } / Float(hull.count)
+            let center = simd_float2(cx, cy)
+            return hull.map { p in
+                let dir = p - center
+                let len = simd_length(dir)
+                guard len > 0.001 else { return p }
+                return p + simd_normalize(dir) * amount
+            }
         }
 
         // MARK: - Point node builder (flat texture label)
