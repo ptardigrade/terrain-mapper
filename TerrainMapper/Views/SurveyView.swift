@@ -46,6 +46,8 @@ struct SurveyView: View {
     @State private var showEndWarning:         Bool = false
     @State private var sessionName:            String = ""
     @State private var showNameSheet:          Bool   = false
+    @State private var showCompletionSummary:  Bool   = false
+    @State private var completionSummaryText:  String = ""
 
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
@@ -53,7 +55,9 @@ struct SurveyView: View {
     @State private var captureToastElevation: Double? = nil
     @State private var captureToastTask: Task<Void, Never>? = nil
 
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    // Timer is handled by .task(id: sessionStarted) to avoid the bug where
+    // Timer.publish is recreated on every SwiftUI view update, resetting the
+    // subscription before the 1-second interval fires.
 
     // MARK: - Helpers
 
@@ -94,8 +98,15 @@ struct SurveyView: View {
             // before pressing Start Survey.
             engine.lidarManager.startPreviewSession()
         }
-        .onReceive(timer) { _ in
-            if sessionStarted { elapsedSeconds += 1 }
+        .task(id: sessionStarted) {
+            // Replaces Timer.publish which was recreated on every view update,
+            // preventing its 1-second callback from ever firing.
+            guard sessionStarted else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { break }
+                elapsedSeconds += 1
+            }
         }
         .alert("Capture Error", isPresented: $showError, presenting: captureError) { _ in
             Button("OK", role: .cancel) {}
@@ -114,6 +125,13 @@ struct SurveyView: View {
         } message: {
             Text("Only \(capturedPoints.count) point\(capturedPoints.count == 1 ? "" : "s") captured so far. At least 6 are recommended — fewer points make the terrain model less reliable. You can keep surveying to improve accuracy.")
         }
+        .alert("Survey Complete", isPresented: $showCompletionSummary) {
+            Button("View Results") {
+                // Session already ended — the onSessionEnded closure handles navigation
+            }
+        } message: {
+            Text(completionSummaryText)
+        }
         .sheet(isPresented: $showNameSheet) {
             sessionNameSheet
         }
@@ -125,7 +143,7 @@ struct SurveyView: View {
         ARSurveyView(
             lidarManager:   engine.lidarManager,
             capturedPoints: capturedPoints,
-            arkitPositions: engine.currentSessionSnapshot?.arkitPositions ?? [:],
+            arkitPositions: engine.arkitPositions,
             elevMin:        elevMin,
             elevMax:        elevMax
         )
@@ -152,9 +170,7 @@ struct SurveyView: View {
                     overlayButton(systemImage: "arrow.uturn.backward") {
                         if let removed = engine.undoLastPoint() {
                             capturedPoints.removeAll { $0.id == removed.id }
-                            let all = capturedPoints.map(\.groundElevation)
-                            elevMin = all.min() ?? 0
-                            elevMax = max(elevMin + 0.01, all.max() ?? 1)
+                            updateCorrectedElevationRange()
                         }
                     }
                 }
@@ -532,9 +548,20 @@ struct SurveyView: View {
     }
 
     private func endSession() {
+        let pts = capturedPoints.count
+        let elapsed = elapsedSeconds
         let session = engine.endSession()
         sessionStarted = false
         sessionStore.archive(session: session)
+
+        // Build completion summary
+        let mins = elapsed / 60
+        let secs = elapsed % 60
+        let timeStr = mins > 0 ? "\(mins)m \(secs)s" : "\(secs)s"
+        let rangeStr = String(format: "%.2f m", elevMax - elevMin)
+        completionSummaryText = "\(pts) points captured in \(timeStr).\nElevation range: \(rangeStr).\nProcessing results now…"
+        showCompletionSummary = true
+
         onSessionEnded(session)
     }
 
@@ -557,15 +584,22 @@ struct SurveyView: View {
             let point = try await engine.capturePoint()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             capturedPoints.append(point)
-            showCaptureToast(elevation: point.groundElevation)
+
+            // Show differential-corrected elevation (baro+LiDAR) in the toast
+            // instead of the noisy Kalman-fused value.
+            let correctedElev = engine.differentialCorrectedElevation(
+                gpsAltitude: point.gpsAltitude,
+                baroDelta: point.baroAltitudeDelta,
+                lidarDistance: point.lidarDistance
+            )
+            showCaptureToast(elevation: correctedElev)
 
             if let snapshot = engine.currentSessionSnapshot {
                 sessionStore.save(session: snapshot)
             }
 
-            let all = capturedPoints.map(\.groundElevation)
-            elevMin = all.min() ?? 0
-            elevMax = max(elevMin + 0.01, all.max() ?? 1)
+            // Update telemetry elevation range using differential-corrected values
+            updateCorrectedElevationRange()
 
         } catch SensorFusionError.lidarCaptureFailed(let inner) {
             if case LiDARError.depthDataUnavailable = inner {
@@ -618,8 +652,39 @@ struct SurveyView: View {
         if let snapshot = engine.currentSessionSnapshot {
             sessionStore.save(session: snapshot)
         }
-        let all = capturedPoints.map(\.groundElevation)
-        elevMin = all.min() ?? 0
-        elevMax = max(elevMin + 0.01, all.max() ?? 1)
+        updateCorrectedElevationRange()
+    }
+
+    // MARK: - Differential elevation range
+
+    /// Recomputes elevation min/max using the baro+LiDAR differential method.
+    /// This gives the user an accurate live preview of the terrain's elevation
+    /// spread instead of showing GPS-noisy Kalman-fused values.
+    private func updateCorrectedElevationRange() {
+        guard capturedPoints.count >= 2 else {
+            if let p = capturedPoints.first {
+                elevMin = p.groundElevation
+                elevMax = p.groundElevation + 0.01
+            }
+            return
+        }
+        // Compute h_start from all capture points
+        let estimates = capturedPoints
+            .filter { $0.captureType != .pathTrack }
+            .map { $0.gpsAltitude - $0.baroAltitudeDelta }
+            .sorted()
+        let n = estimates.count
+        guard n > 0 else { return }
+        let h_start: Double
+        if n % 2 == 1 {
+            h_start = estimates[n / 2]
+        } else {
+            h_start = (estimates[n / 2 - 1] + estimates[n / 2]) / 2.0
+        }
+        let corrected = capturedPoints.map { p in
+            h_start + p.baroAltitudeDelta - p.lidarDistance
+        }
+        elevMin = corrected.min() ?? 0
+        elevMax = max(elevMin + 0.01, corrected.max() ?? 1)
     }
 }

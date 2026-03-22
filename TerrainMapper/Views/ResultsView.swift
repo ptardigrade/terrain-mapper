@@ -239,7 +239,7 @@ struct ResultsView: View {
             ], spacing: 12) {
                 StatCard(icon: "mappin.circle.fill", label: "Points",
                          value: "\(terrain.stats.validPointCount)",
-                         sub: "\(terrain.stats.outlierCount) outliers")
+                         sub: outlierSubtext)
                 StatCard(icon: "rectangle.expand.diagonal", label: "Area",
                          value: formatArea(terrain.stats.surveyedAreaM2),
                          sub: "surveyed")
@@ -276,9 +276,25 @@ struct ResultsView: View {
         switch rms {
         case ..<0.05: return "Survey-grade — excellent"
         case ..<0.15: return "RTK-grade — very good"
-        case ..<0.50: return "GPS-grade — acceptable"
+        case ..<0.50: return "Good — baro+LiDAR corrected"
+        case ..<1.00: return "Acceptable — some noise"
         default:      return "Low — hold phone steady next time"
         }
+    }
+
+    /// Descriptive subtext for the Points stat card showing outlier breakdown.
+    private var outlierSubtext: String {
+        let count = terrain.stats.outlierCount
+        if count == 0 { return "no outliers" }
+        // Count how many were geometric (LiDAR range) vs MAD
+        let lidarOutliers = terrain.outlierPoints.filter {
+            $0.lidarDistance < 0.10 || $0.lidarDistance > 5.0
+        }.count
+        let madOutliers = max(0, count - lidarOutliers)
+        var parts: [String] = []
+        if lidarOutliers > 0 { parts.append("\(lidarOutliers) LiDAR range") }
+        if madOutliers > 0   { parts.append("\(madOutliers) elevation") }
+        return "\(count) outlier\(count == 1 ? "" : "s") · " + parts.joined(separator: " + ")
     }
 }
 

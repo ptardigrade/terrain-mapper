@@ -49,6 +49,9 @@ struct ARSurveyView: UIViewRepresentable {
         // Wire up LiDAR session when it becomes available (or changes).
         if let session = lidarManager.arSession, uiView.session !== session {
             uiView.session = session
+            // New session means a new world origin — clear all old markers
+            // from the previous survey to avoid stale nodes persisting.
+            context.coordinator.clearAllPoints()
         }
         context.coordinator.updatePoints(
             capturedPoints,
@@ -68,6 +71,21 @@ struct ARSurveyView: UIViewRepresentable {
         private var renderedIDs = Set<String>()
 
         // MARK: - Point management
+
+        /// Removes all rendered survey point nodes and resets tracking state.
+        /// Called when a new AR session starts (new survey) to avoid stale
+        /// markers from the previous session persisting in the scene.
+        func clearAllPoints() {
+            guard let scene = sceneView?.scene else { return }
+            for id in renderedIDs {
+                scene.rootNode.childNode(withName: "pt_\(id)", recursively: false)?
+                    .removeFromParentNode()
+            }
+            renderedIDs.removeAll()
+            // Also remove the beacon so it doesn't linger from an old session
+            beaconNode?.removeFromParentNode()
+            beaconNode = nil
+        }
 
         func updatePoints(
             _ points: [SurveyPoint],

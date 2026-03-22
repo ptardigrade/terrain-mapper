@@ -5,8 +5,8 @@
 // completed SurveySession and produces a ProcessedTerrain.
 //
 // Pipeline stages (in order):
-//  1. Outlier detection              (OutlierDetector)
-//  2. Differential elevation correct (DifferentialElevationCorrector)
+//  1. Differential elevation correct (DifferentialElevationCorrector)
+//  2. Outlier detection              (OutlierDetector — on corrected elevations)
 //  3. Loop-closure correction        (LoopClosureProcessor)
 //  4. ARKit VIO position refinement  (arkitRefinePositions)
 //  5. PDR position refinement        (GPSManager, fallback when no ARKit data)
@@ -115,18 +115,12 @@ final class ProcessingPipeline: ObservableObject {
         var points = session.points
         var pathPoints = session.pathTrackPoints
 
-        // ── 1. Outlier detection ──────────────────────────────────────────
-        updateProgress("Detecting outliers…")
-        var detector = OutlierDetector()
-        detector.madThreshold = madThreshold
-        detector.detectOutliers(in: &points)
-
-        let outlierCount = points.filter(\.isOutlier).count
-
-        // ── 2. Differential elevation correction ─────────────────────────
+        // ── 1. Differential elevation correction ─────────────────────────
         // Recompute ground elevations using baro+LiDAR differential method
-        // instead of per-point Kalman-fused altitudes.  This reduces elevation
-        // noise from ±5 m (GPS-dominated) to ±0.12 m (baro+LiDAR).
+        // BEFORE outlier detection.  This way, outlier detection operates on
+        // precise baro+LiDAR elevations (±0.12 m) instead of noisy
+        // Kalman-fused values (±5 m).  Running it after would flag
+        // perfectly good points as outliers due to GPS altitude scatter.
         updateProgress("Applying differential elevation…")
         let originalPoints = points  // snapshot for path-track offset calc
         let diffCorrector = DifferentialElevationCorrector()
@@ -136,6 +130,14 @@ final class ProcessingPipeline: ObservableObject {
             correctedCaptures: points,
             originalCaptures: originalPoints
         )
+
+        // ── 2. Outlier detection (on corrected elevations) ──────────────
+        updateProgress("Detecting outliers…")
+        var detector = OutlierDetector()
+        detector.madThreshold = madThreshold
+        detector.detectOutliers(in: &points)
+
+        let outlierCount = points.filter(\.isOutlier).count
 
         // ── 3. Loop-closure correction ────────────────────────────────────
         updateProgress("Checking for loop closure…")
@@ -230,7 +232,9 @@ final class ProcessingPipeline: ObservableObject {
             outliers:   outlierCount,
             loopClosed: loopClosed,
             geoid:      enableGeoidCorrection,
-            elapsed:    elapsed
+            elapsed:    elapsed,
+            hasArkitData: hasArkitData,
+            arkitPositions: arkitPositions
         )
 
         return ProcessedTerrain(
@@ -366,18 +370,39 @@ final class ProcessingPipeline: ObservableObject {
         outliers: Int,
         loopClosed: Bool,
         geoid: Bool,
-        elapsed: Double
+        elapsed: Double,
+        hasArkitData: Bool,
+        arkitPositions: [String: [Double]]?
     ) -> ProcessingStats {
         let elevs = valid.map(\.groundElevation)
         let elevMin = elevs.min() ?? 0
         let elevMax = elevs.max() ?? 0
 
-        // Surveyed area: convex hull area via shoelace formula
-        let area = convexHullArea(valid)
+        // Surveyed area: convex hull area via shoelace formula.
+        // When ARKit VIO was used, only include points that have VIO positions
+        // to avoid GPS-noisy points expanding the hull.
+        let areaPoints: [SurveyPoint]
+        if hasArkitData, let ark = arkitPositions {
+            let vioPoints = valid.filter { ark[$0.id.uuidString] != nil }
+            areaPoints = vioPoints.count >= 3 ? vioPoints : valid
+        } else {
+            areaPoints = valid
+        }
+        let area = convexHullArea(areaPoints)
 
-        // RMS vertical accuracy
-        let va = valid.map { $0.verticalAccuracy * $0.verticalAccuracy }
-        let rms = va.isEmpty ? 0 : sqrt(va.reduce(0, +) / Double(va.count))
+        // RMS accuracy: compute from elevation residuals (deviation from the
+        // median), which reflects the actual precision of the baro+LiDAR
+        // differential correction.  The old method used raw GPS verticalAccuracy
+        // which was ~±4 m regardless of how good the corrected data was.
+        let rms: Double
+        if elevs.count >= 3 {
+            let medianElev = elevs.sorted()[elevs.count / 2]
+            let residuals = elevs.map { ($0 - medianElev) * ($0 - medianElev) }
+            rms = sqrt(residuals.reduce(0, +) / Double(residuals.count))
+        } else {
+            let va = valid.map { $0.verticalAccuracy * $0.verticalAccuracy }
+            rms = va.isEmpty ? 0 : sqrt(va.reduce(0, +) / Double(va.count))
+        }
 
         return ProcessingStats(
             inputPointCount:       input.count,

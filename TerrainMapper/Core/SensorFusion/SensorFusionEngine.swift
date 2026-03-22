@@ -105,13 +105,48 @@ final class SensorFusionEngine: ObservableObject {
 
     /// Accumulates ARKit world-space (x, z) positions keyed by SurveyPoint UUID.
     /// Copied into SurveySession.arkitPositions at endSession().
-    private var arkitPositions: [String: [Double]] = [:]
+    /// Also published so ARSurveyView can render markers during the live session.
+    @Published private(set) var arkitPositions: [String: [Double]] = [:]
 
     /// Compass heading (degrees CW from true north) when the ARKit session started.
     private var arkitAnchorHeading: Double? = nil
 
     /// Timeout in seconds for the stationary gate during a capture.
     private let kStationaryTimeoutSeconds = 15.0
+
+    // MARK: - Live differential elevation
+
+    /// Computes a baro-differential corrected ground elevation for a newly
+    /// captured point.  Uses the same formula as DifferentialElevationCorrector
+    /// but runs incrementally so the capture toast and telemetry display
+    /// corrected values instead of noisy Kalman-fused ones.
+    ///
+    /// Returns `(correctedGroundElev, h_start)`.
+    func differentialCorrectedElevation(
+        gpsAltitude: Double,
+        baroDelta: Double,
+        lidarDistance: Double
+    ) -> Double {
+        guard let pts = session?.points, !pts.isEmpty else {
+            // Fallback: raw computation for the very first point
+            return gpsAltitude - lidarDistance
+        }
+        // Estimate h_start from all capture points so far (including this one implicitly)
+        var estimates = pts.compactMap { p -> Double? in
+            guard p.captureType != .pathTrack else { return nil }
+            return p.gpsAltitude - p.baroAltitudeDelta
+        }
+        estimates.append(gpsAltitude - baroDelta)
+        estimates.sort()
+        let h_start: Double
+        let n = estimates.count
+        if n % 2 == 1 {
+            h_start = estimates[n / 2]
+        } else {
+            h_start = (estimates[n / 2 - 1] + estimates[n / 2]) / 2.0
+        }
+        return h_start + baroDelta - lidarDistance
+    }
 
     // MARK: - Session lifecycle
 
