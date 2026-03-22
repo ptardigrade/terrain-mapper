@@ -54,6 +54,7 @@ struct SurveyView: View {
 
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
+    @State private var correctedElevationsMap: [String: Double] = [:]
 
     @State private var captureToastElevation: Double? = nil
     @State private var captureToastTask: Task<Void, Never>? = nil
@@ -111,6 +112,9 @@ struct SurveyView: View {
                 elapsedSeconds += 1
             }
         }
+        .onChange(of: engine.hasReliableGPSAltitude) { _, hasGPS in
+            if hasGPS { updateCorrectedElevationRange() }
+        }
         .alert("Capture Error", isPresented: $showError, presenting: captureError) { _ in
             Button("OK", role: .cancel) {}
         } message: { msg in Text(msg) }
@@ -152,7 +156,8 @@ struct SurveyView: View {
             capturedPoints: capturedPoints,
             arkitPositions: engine.arkitPositions,
             elevMin:        elevMin,
-            elevMax:        elevMax
+            elevMax:        elevMax,
+            correctedElevations: correctedElevationsMap
         )
         .ignoresSafeArea()
     }
@@ -671,30 +676,48 @@ struct SurveyView: View {
     // MARK: - Differential elevation range
 
     /// Recomputes elevation min/max using the baro+LiDAR differential method.
+    ///
+    /// Two modes:
+    /// - **Relative** (no reliable GPS yet): first point = 0 m, others relative to it.
+    /// - **Absolute** (GPS altitude available): h_start from median of reliable-GPS points.
     private func updateCorrectedElevationRange() {
-        guard capturedPoints.count >= 2 else {
-            if let p = capturedPoints.first {
-                elevMin = p.groundElevation
-                elevMax = p.groundElevation + 0.01
-            }
-            return
-        }
-        let estimates = capturedPoints
-            .filter { $0.captureType != .pathTrack }
+        guard !capturedPoints.isEmpty else { return }
+
+        let reliableEstimates = capturedPoints
+            .filter { $0.captureType != .pathTrack && $0.verticalAccuracy > 0 }
             .map { $0.gpsAltitude - $0.baroAltitudeDelta }
             .sorted()
-        let n = estimates.count
-        guard n > 0 else { return }
-        let h_start: Double
-        if n % 2 == 1 {
-            h_start = estimates[n / 2]
+
+        var newMap: [String: Double] = [:]
+        var allElevs: [Double] = []
+
+        if reliableEstimates.isEmpty {
+            // Relative mode: first point = 0m
+            let first = capturedPoints[0]
+            let firstRef = first.baroAltitudeDelta - first.lidarDistance
+            for p in capturedPoints {
+                let relElev = (p.baroAltitudeDelta - p.lidarDistance) - firstRef
+                newMap[p.id.uuidString] = relElev
+                allElevs.append(relElev)
+            }
         } else {
-            h_start = (estimates[n / 2 - 1] + estimates[n / 2]) / 2.0
+            // Absolute mode: h_start from reliable-GPS-only median
+            let n = reliableEstimates.count
+            let h_start: Double
+            if n % 2 == 1 {
+                h_start = reliableEstimates[n / 2]
+            } else {
+                h_start = (reliableEstimates[n / 2 - 1] + reliableEstimates[n / 2]) / 2.0
+            }
+            for p in capturedPoints {
+                let corrElev = h_start + p.baroAltitudeDelta - p.lidarDistance
+                newMap[p.id.uuidString] = corrElev
+                allElevs.append(corrElev)
+            }
         }
-        let corrected = capturedPoints.map { p in
-            h_start + p.baroAltitudeDelta - p.lidarDistance
-        }
-        elevMin = corrected.min() ?? 0
-        elevMax = max(elevMin + 0.01, corrected.max() ?? 1)
+
+        correctedElevationsMap = newMap
+        elevMin = allElevs.min() ?? 0
+        elevMax = max(elevMin + 0.01, allElevs.max() ?? 1)
     }
 }

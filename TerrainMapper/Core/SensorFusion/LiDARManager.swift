@@ -109,6 +109,9 @@ final class LiDARManager: NSObject, ObservableObject {
               ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else { return }
         let config = ARWorldTrackingConfiguration()
         config.frameSemantics = .sceneDepth
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            config.sceneReconstruction = .mesh
+        }
         if arSession == nil {
             arSession = ARSession()
             arSession?.delegate = self
@@ -146,6 +149,9 @@ final class LiDARManager: NSObject, ObservableObject {
         if !isSessionRunning {
             let config = ARWorldTrackingConfiguration()
             config.frameSemantics = .sceneDepth
+            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+                config.sceneReconstruction = .mesh
+            }
             if arSession == nil {
                 arSession = ARSession()
                 arSession?.delegate = self

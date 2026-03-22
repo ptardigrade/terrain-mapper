@@ -94,6 +94,12 @@ final class SensorFusionEngine: ObservableObject {
     /// Tracks whether the Kalman filter has received at least one GPS seed.
     private var kalmanInitialised = false
 
+    /// True once the Kalman filter has been seeded with a GPS fix that has
+    /// valid vertical accuracy.  Published so SurveyView can switch from
+    /// relative elevation display (first point = 0 m) to absolute GPS-based
+    /// elevations once real altitude data is available.
+    @Published private(set) var hasReliableGPSAltitude: Bool = false
+
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - ARKit VIO state
@@ -156,6 +162,7 @@ final class SensorFusionEngine: ObservableObject {
 
         kalman     = KalmanFilter()
         kalmanInitialised = false
+        hasReliableGPSAltitude = false
         session    = SurveySession(stickHeight: stickHeight, name: name)
         pointCount = 0
         isFirstCapture    = true
@@ -247,6 +254,14 @@ final class SensorFusionEngine: ObservableObject {
         let baroDelta = barometerManager.currentRelativeAltitude
         kalman.predict(dt: 1.0, baroAltitudeDelta: baroDelta)
 
+        // ── Step 2b: Snapshot ARKit ground-hit position BEFORE LiDAR capture ──
+        // The LiDAR capture takes ~3 seconds.  Snapshot the beacon position now
+        // (after stationary gate, before LiDAR sampling) so the dot appears where
+        // the pointer was when the user tapped "Capture", not where the phone
+        // drifted to 3 seconds later.
+        let snapshotGroundHit = lidarManager.currentGroundHitPosition
+        let snapshotCameraPos = lidarManager.currentWorldPosition
+
         // ── Step 3: Capture LiDAR distance ───────────────────────────────
         let lidarDistance: Double
         do {
@@ -271,13 +286,13 @@ final class SensorFusionEngine: ObservableObject {
             kalman.updateGPS(altitude: location.altitude)
         }
 
-        // ── Step 5b: Record ARKit world position for VIO-based refinement ──
-        // The LiDAR ARSession has been running continuously since the first
-        // capturePoint() call (no world-origin reset between captures).
-        // We record the camera's world-space (x, z) now — after the 3-second
-        // LiDAR accumulation window — while the phone is still stationary over
-        // the measurement point.
-        let arkitPos = lidarManager.currentWorldPosition
+        // ── Step 5b: Record ARKit ground-hit position for VIO-based refinement ──
+        // Use the pre-capture snapshot so the dot appears at the beacon location
+        // when the user tapped Capture.  Prefer the ground-hit position (where
+        // the beacon/pointer is) over the camera position (directly above phone).
+        // Fall back to post-capture positions if snapshot was nil.
+        let groundHit = snapshotGroundHit ?? lidarManager.currentGroundHitPosition
+        let cameraPos = snapshotCameraPos ?? lidarManager.currentWorldPosition
 
         // On the very first capture, record the compass heading to anchor the
         // ARKit world frame to geographic North for the processing pipeline.
@@ -295,7 +310,13 @@ final class SensorFusionEngine: ObservableObject {
         // Store ARKit position keyed by UUID so the pipeline can look it up.
         // Format: [x, z, y_ground] — pipeline uses [0]=x and [1]=z (unchanged);
         // ARSurveyView uses [2]=y_ground to place 3-D dot anchors.
-        if let pos = arkitPos {
+        //
+        // Prefer the ground-hit position (beacon location) so the dot appears
+        // where the user was pointing, not where the phone was held.
+        if let hit = groundHit {
+            arkitPositions[pointID.uuidString] = [Double(hit.x), Double(hit.z), Double(hit.y)]
+        } else if let pos = cameraPos {
+            // Fallback: camera position with estimated ground Y
             let groundY = Double(pos.y) - lidarDistance
             arkitPositions[pointID.uuidString] = [Double(pos.x), Double(pos.z), groundY]
         }
@@ -384,6 +405,7 @@ final class SensorFusionEngine: ObservableObject {
                     // Seed the Kalman filter with the first GPS altitude
                     self.kalman = KalmanFilter(initialAltitude: location.altitude)
                     self.kalmanInitialised = true
+                    self.hasReliableGPSAltitude = true
                 } else {
                     self.kalman.updateGPS(altitude: location.altitude)
                 }
