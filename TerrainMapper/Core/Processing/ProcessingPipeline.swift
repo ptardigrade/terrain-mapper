@@ -234,7 +234,7 @@ final class ProcessingPipeline: ObservableObject {
             geoid:      enableGeoidCorrection,
             elapsed:    elapsed,
             hasArkitData: hasArkitData,
-            arkitPositions: arkitPositions
+            arkitPositions: capturedArkitPositions
         )
 
         return ProcessedTerrain(
