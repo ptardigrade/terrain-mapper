@@ -100,6 +100,33 @@ final class LiDARManager: NSObject, ObservableObject {
         return simd_float3(col3.x, col3.y, col3.z)
     }
 
+    /// The ground point where the device's camera ray intersects the AR mesh
+    /// or estimated ground plane.  Used to place survey markers at the pointer
+    /// location rather than directly under the phone.
+    ///
+    /// Performs a raycast from the camera position straight down (-Y in world
+    /// space).  Falls back to projecting the camera position down by the most
+    /// recent median depth if no mesh hit is found.
+    var currentGroundHitPosition: simd_float3? {
+        guard let session = arSession, let frame = session.currentFrame else { return nil }
+        let camTransform = frame.camera.transform
+        let camPos = simd_float3(camTransform.columns.3.x,
+                                 camTransform.columns.3.y,
+                                 camTransform.columns.3.z)
+
+        // Raycast straight down from camera
+        let query = ARRaycastQuery(origin: camPos,
+                                   direction: simd_float3(0, -1, 0),
+                                   allowing: .existingPlaneGeometry,
+                                   alignment: .horizontal)
+        let results = session.raycast(query)
+        if let hit = results.first {
+            let p = hit.worldTransform.columns.3
+            return simd_float3(p.x, p.y, p.z)
+        }
+        return nil
+    }
+
     // MARK: - Public API
 
     /// Starts the AR session immediately so the camera feed is visible before
