@@ -6,6 +6,7 @@
 // via a shared binding on TerrainMapperApp's @StateObject.
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var engine:   SensorFusionEngine
@@ -17,49 +18,71 @@ struct ContentView: View {
     @State private var isProcessing: Bool = false
     /// Pipeline instance (shared so progress can be observed).
     @StateObject private var pipeline = ProcessingPipeline()
+    /// Selected tab index — used to programmatically switch to Results.
+    @State private var selectedTab: Int = 0
+
+    init() {
+        // Force an opaque tab bar with a solid dark background so icons
+        // are always visible — even over the full-bleed AR camera feed.
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        let bg = UIColor(red: 0.107, green: 0.107, blue: 0.114, alpha: 1.0) // Theme.surfaceContainerLow
+        appearance.backgroundColor = bg
+        // Active tab icon + text color
+        let activeColor = UIColor(red: 0.663, green: 0.741, blue: 0.537, alpha: 1.0) // Theme.primary
+        let inactiveColor = UIColor(red: 0.733, green: 0.792, blue: 0.757, alpha: 0.7) // Theme.onSurfaceVariant
+        appearance.stackedLayoutAppearance.selected.iconColor = activeColor
+        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: activeColor]
+        appearance.stackedLayoutAppearance.normal.iconColor = inactiveColor
+        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: inactiveColor]
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
 
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
-            TabView {
-            // ── Survey tab ────────────────────────────────────────────────
-            SurveyView(onSessionEnded: { session in
-                processSession(session)
-            })
-            .tabItem {
-                Label("Survey", systemImage: "mappin.and.ellipse")
-            }
-
-            // ── Results tab ───────────────────────────────────────────────
-            Group {
-                if let terrain = processedTerrain {
-                    ResultsView(terrain: terrain)
-                } else if isProcessing {
-                    processingPlaceholder
-                } else {
-                    noResultsPlaceholder
-                }
-            }
-            .tabItem {
-                Label("Results", systemImage: "chart.xyaxis.line")
-            }
-
-            // ── Settings tab ──────────────────────────────────────────────
-            SettingsView()
+            TabView(selection: $selectedTab) {
+                // ── Survey tab ────────────────────────────────────────────────
+                SurveyView(onSessionEnded: { session in
+                    processSession(session)
+                })
                 .tabItem {
-                    Label("Settings", systemImage: "gearshape")
+                    Label("Survey", systemImage: "mappin.and.ellipse")
                 }
+                .tag(0)
 
-            // ── History tab ───────────────────────────────────────────────
-            SessionHistoryView()
-                .tabItem {
-                    Label("History", systemImage: "clock.arrow.circlepath")
+                // ── Results tab ───────────────────────────────────────────────
+                Group {
+                    if let terrain = processedTerrain {
+                        ResultsView(terrain: terrain)
+                    } else if isProcessing {
+                        processingPlaceholder
+                    } else {
+                        noResultsPlaceholder
+                    }
                 }
-        }
+                .tabItem {
+                    Label("Results", systemImage: "chart.xyaxis.line")
+                }
+                .tag(1)
+
+                // ── Settings tab ──────────────────────────────────────────────
+                SettingsView()
+                    .tabItem {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .tag(2)
+
+                // ── History tab ───────────────────────────────────────────────
+                SessionHistoryView()
+                    .tabItem {
+                        Label("History", systemImage: "clock.arrow.circlepath")
+                    }
+                    .tag(3)
+            }
+            .tint(Theme.primary)
             .environmentObject(pipeline)
-            // Fix tab bar appearance to match dark design language
-            .toolbarBackground(Theme.surfaceContainerLow, for: .tabBar)
-            .toolbarBackground(.visible, for: .tabBar)
         }
     }
 
@@ -69,6 +92,9 @@ struct ContentView: View {
         isProcessing = true
         processedTerrain = nil
         settings.configure(pipeline)
+
+        // Switch to the Results tab so the user sees processing progress.
+        selectedTab = 1
 
         Task {
             let terrain = await pipeline.process(session: session)

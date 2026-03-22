@@ -101,10 +101,13 @@ struct ARSurveyView: UIViewRepresentable {
         private let meshWireframeMaterial: SCNMaterial = {
             let mat = SCNMaterial()
             mat.fillMode = .lines
-            mat.diffuse.contents = UIColor(red: 0.3, green: 0.9, blue: 0.7, alpha: 0.15)
-            mat.emission.contents = UIColor(red: 0.3, green: 0.9, blue: 0.7, alpha: 0.15)
+            mat.diffuse.contents = UIColor(red: 0.25, green: 0.95, blue: 0.65, alpha: 0.55)
+            mat.emission.contents = UIColor(red: 0.25, green: 0.95, blue: 0.65, alpha: 0.7)
+            mat.emission.intensity = 0.8
             mat.lightingModel = .constant
             mat.isDoubleSided = true
+            mat.readsFromDepthBuffer = true
+            mat.writesToDepthBuffer = false
             return mat
         }()
 
@@ -204,7 +207,7 @@ struct ARSurveyView: UIViewRepresentable {
             let node = SCNNode()
             node.geometry = Self.makeMeshWireframeGeometry(from: meshAnchor)
             node.geometry?.materials = [meshWireframeMaterial]
-            node.renderingOrder = -1  // Render behind point markers
+            node.renderingOrder = 0   // Render as AR overlay on camera feed
             return node
         }
 
@@ -213,6 +216,7 @@ struct ARSurveyView: UIViewRepresentable {
             guard let meshAnchor = anchor as? ARMeshAnchor else { return }
             node.geometry = Self.makeMeshWireframeGeometry(from: meshAnchor)
             node.geometry?.materials = [meshWireframeMaterial]
+            node.renderingOrder = 0
         }
 
         // MARK: - Mesh wireframe geometry
@@ -247,7 +251,7 @@ struct ARSurveyView: UIViewRepresentable {
         /// anchors.  Heavy work is dispatched to a background queue.
         private func updateMeshContours(renderer: SCNSceneRenderer, time: TimeInterval) {
             guard !isComputingContours,
-                  time - lastMeshContourTime > 3.0 else { return }
+                  time - lastMeshContourTime > 2.0 else { return }
             lastMeshContourTime = time
 
             guard let scnView = renderer as? ARSCNView,
@@ -271,7 +275,7 @@ struct ARSurveyView: UIViewRepresentable {
                     self.contourLinesNode?.removeFromParentNode()
                     if let geo = geometry {
                         let node = SCNNode(geometry: geo)
-                        node.renderingOrder = 1
+                        node.renderingOrder = 2  // Above mesh wireframe (0) and point markers (1)
                         scene.rootNode.addChildNode(node)
                         self.contourLinesNode = node
                     }
@@ -342,11 +346,12 @@ struct ARSurveyView: UIViewRepresentable {
             guard !triangles.isEmpty else { return nil }
 
             let range = yMax - yMin
-            guard range > 0.02 else { return nil }
+            guard range > 0.005 else { return nil }
 
             // Adaptive contour interval
             let interval: Float
-            if range < 0.3 { interval = 0.05 }
+            if range < 0.1 { interval = 0.02 }
+            else if range < 0.3 { interval = 0.05 }
             else if range < 1.0 { interval = 0.1 }
             else if range < 3.0 { interval = 0.25 }
             else if range < 8.0 { interval = 0.5 }
@@ -425,6 +430,9 @@ struct ARSurveyView: UIViewRepresentable {
             let material = SCNMaterial()
             material.lightingModel = .constant
             material.isDoubleSided = true
+            material.emission.intensity = 1.0
+            material.readsFromDepthBuffer = true
+            material.writesToDepthBuffer = false
             geometry.materials = [material]
 
             return geometry

@@ -23,6 +23,7 @@
 
 import SwiftUI
 import CoreLocation
+import AVFoundation
 
 struct SurveyView: View {
 
@@ -58,6 +59,7 @@ struct SurveyView: View {
 
     @State private var captureToastElevation: Double? = nil
     @State private var captureToastTask: Task<Void, Never>? = nil
+    @State private var isFlashlightOn: Bool = false
 
     // Timer is handled by .task(id: sessionStarted) to avoid the bug where
     // Timer.publish is recreated on every SwiftUI view update, resetting the
@@ -177,6 +179,24 @@ struct SurveyView: View {
     private var arOverlayControls: some View {
         VStack {
             HStack(spacing: 8) {
+                // Flashlight toggle — top left, same height as End button
+                if sessionStarted {
+                    Button {
+                        toggleFlashlight()
+                    } label: {
+                        Image(systemName: isFlashlightOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(isFlashlightOn ? .yellow : Theme.onSurface)
+                            .frame(width: 38, height: 38)
+                            .background(
+                                isFlashlightOn
+                                    ? Color.yellow.opacity(0.2)
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 10)
+                            )
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
                 Spacer()
                 if sessionStarted && !capturedPoints.isEmpty {
                     overlayButton(systemImage: "arrow.uturn.backward") {
@@ -569,6 +589,7 @@ struct SurveyView: View {
         let elapsed = elapsedSeconds
         let session = engine.endSession()
         sessionStarted = false
+        turnOffFlashlight()
         sessionStore.archive(session: session)
 
         // Store session for deferred navigation — View Results button triggers onSessionEnded
@@ -671,6 +692,37 @@ struct SurveyView: View {
             sessionStore.save(session: snapshot)
         }
         updateCorrectedElevationRange()
+    }
+
+    // MARK: - Flashlight
+
+    private func toggleFlashlight() {
+        guard let device = AVCaptureDevice.default(for: .video),
+              device.hasTorch else { return }
+        do {
+            try device.lockForConfiguration()
+            if isFlashlightOn {
+                device.torchMode = .off
+            } else {
+                try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+            }
+            device.unlockForConfiguration()
+            isFlashlightOn.toggle()
+        } catch {
+            // Silently ignore — torch may be temporarily unavailable during AR capture
+        }
+    }
+
+    private func turnOffFlashlight() {
+        guard isFlashlightOn,
+              let device = AVCaptureDevice.default(for: .video),
+              device.hasTorch else { return }
+        do {
+            try device.lockForConfiguration()
+            device.torchMode = .off
+            device.unlockForConfiguration()
+            isFlashlightOn = false
+        } catch {}
     }
 
     // MARK: - Differential elevation range
