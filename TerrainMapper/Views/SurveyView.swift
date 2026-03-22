@@ -11,6 +11,8 @@
 //   │    (live camera + AR overlays)       │
 //   │    • White dot + elevation per point │
 //   │    • Pulsing green beacon at target  │
+//   │    • Wireframe ground grid           │
+//   │    • Mesh wireframe + contour lines  │
 //   │                                      │
 //   │  ┌────────────────────────────────┐  │
 //   │  │ TILT  GPS ACC  MOTION    ALT   │  │  ← glassmorphism panel
@@ -48,6 +50,7 @@ struct SurveyView: View {
     @State private var showNameSheet:          Bool   = false
     @State private var showCompletionSummary:  Bool   = false
     @State private var completionSummaryText:  String = ""
+    @State private var completedSession:       SurveySession? = nil
 
     @State private var elevMin: Double = 0
     @State private var elevMax: Double = 1
@@ -127,7 +130,11 @@ struct SurveyView: View {
         }
         .alert("Survey Complete", isPresented: $showCompletionSummary) {
             Button("View Results") {
-                // Session already ended — the onSessionEnded closure handles navigation
+                // Navigate to results AFTER the user taps "View Results"
+                if let session = completedSession {
+                    onSessionEnded(session)
+                    completedSession = nil
+                }
             }
         } message: {
             Text(completionSummaryText)
@@ -350,7 +357,8 @@ struct SurveyView: View {
 
     // MARK: - Capture button
 
-    private var gpsTooInaccurate: Bool { engine.gpsAccuracy > 30 }
+    /// GPS accuracy warning threshold — shows visual warning but does NOT block capture.
+    private var gpsIsWeak: Bool { engine.gpsAccuracy > 30 }
 
     private var captureButton: some View {
         Button(action: {
@@ -372,15 +380,20 @@ struct SurveyView: View {
                             .tint(.white)
                             .frame(maxWidth: 200)
                     }
-                } else if gpsTooInaccurate {
-                    Image(systemName: "location.slash.fill")
-                    Text("Weak GPS — Move to open sky").font(.system(size: 17, weight: .bold))
                 } else if !engine.imuIsStationary {
                     Image(systemName: "exclamationmark.triangle.fill")
                     Text("Hold Steady").font(.system(size: 17, weight: .bold))
                 } else {
                     Image(systemName: "plus.circle.fill").font(.title3)
-                    Text("Capture Point").font(.system(size: 17, weight: .bold))
+                    VStack(spacing: 2) {
+                        Text("Capture Point").font(.system(size: 17, weight: .bold))
+                        // Show GPS warning inline but don't block capture
+                        if gpsIsWeak {
+                            Text("⚠ Weak GPS — ARKit VIO active")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.yellow.opacity(0.9))
+                        }
+                    }
                 }
             }
             .foregroundStyle(.white)
@@ -388,10 +401,11 @@ struct SurveyView: View {
             .frame(maxWidth: .infinity)
             .background(captureButtonBackground)
         }
-        .disabled(sessionStarted && (isCapturing || !engine.isSessionActive || gpsTooInaccurate))
+        // GPS no longer blocks — only disable during active capture or if engine stopped
+        .disabled(sessionStarted && (isCapturing || !engine.isSessionActive))
         .animation(.easeInOut(duration: 0.2), value: isCapturing)
         .animation(.easeInOut(duration: 0.2), value: engine.imuIsStationary)
-        .animation(.easeInOut(duration: 0.3), value: gpsTooInaccurate)
+        .animation(.easeInOut(duration: 0.3), value: gpsIsWeak)
     }
 
     @ViewBuilder
@@ -400,8 +414,6 @@ struct SurveyView: View {
             RoundedRectangle(cornerRadius: 14).fill(Theme.primaryGradient)
         } else if isCapturing {
             RoundedRectangle(cornerRadius: 14).fill(Theme.primary.opacity(0.75))
-        } else if gpsTooInaccurate {
-            RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.8))
         } else if !engine.imuIsStationary {
             RoundedRectangle(cornerRadius: 14).fill(Color.orange)
         } else {
@@ -554,6 +566,9 @@ struct SurveyView: View {
         sessionStarted = false
         sessionStore.archive(session: session)
 
+        // Store session for deferred navigation — View Results button triggers onSessionEnded
+        completedSession = session
+
         // Build completion summary
         let mins = elapsed / 60
         let secs = elapsed % 60
@@ -561,8 +576,6 @@ struct SurveyView: View {
         let rangeStr = String(format: "%.2f m", elevMax - elevMin)
         completionSummaryText = "\(pts) points captured in \(timeStr).\nElevation range: \(rangeStr).\nProcessing results now…"
         showCompletionSummary = true
-
-        onSessionEnded(session)
     }
 
     private func checkEndSession() {
@@ -658,8 +671,6 @@ struct SurveyView: View {
     // MARK: - Differential elevation range
 
     /// Recomputes elevation min/max using the baro+LiDAR differential method.
-    /// This gives the user an accurate live preview of the terrain's elevation
-    /// spread instead of showing GPS-noisy Kalman-fused values.
     private func updateCorrectedElevationRange() {
         guard capturedPoints.count >= 2 else {
             if let p = capturedPoints.first {
@@ -668,7 +679,6 @@ struct SurveyView: View {
             }
             return
         }
-        // Compute h_start from all capture points
         let estimates = capturedPoints
             .filter { $0.captureType != .pathTrack }
             .map { $0.gpsAltitude - $0.baroAltitudeDelta }

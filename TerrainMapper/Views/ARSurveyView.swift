@@ -4,8 +4,11 @@
 // UIViewRepresentable wrapping ARSCNView for the live AR survey interface.
 //
 // Rendered overlays:
-//   • White sphere + billboard elevation label for each captured survey point
+//   • White sphere + flat billboard elevation label for each captured survey point
 //   • Pulsing green beacon (torus + dot) at the live LiDAR target position
+//   • Wireframe ground grid at beacon height (3D-scan-app style)
+//   • Survey mesh wireframe connecting captured points
+//   • Contour lines interpolated from captured elevations
 //
 // The ARSession is owned by LiDARManager and shared here.  ARSurveyView
 // observes lidarManager.$arSession so updateUIView fires the moment the
@@ -68,13 +71,20 @@ struct ARSurveyView: UIViewRepresentable {
         weak var sceneView: ARSCNView?
 
         /// UUIDs of points already rendered as scene nodes — avoids duplicates.
-        private var renderedIDs = Set<String>()
+        fileprivate(set) var renderedIDs = Set<String>()
+
+        /// Stored ARKit 3D positions for mesh/contour computation.
+        fileprivate(set) var arPoints: [(id: String, x: Float, y: Float, z: Float, elev: Double)] = []
+
+        // MARK: - Overlay nodes
+
+        fileprivate var groundGridNode: SCNNode?
+        fileprivate var meshWireframeNode: SCNNode?
+        fileprivate var contourLinesNode: SCNNode?
 
         // MARK: - Point management
 
         /// Removes all rendered survey point nodes and resets tracking state.
-        /// Called when a new AR session starts (new survey) to avoid stale
-        /// markers from the previous session persisting in the scene.
         func clearAllPoints() {
             guard let scene = sceneView?.scene else { return }
             for id in renderedIDs {
@@ -82,9 +92,17 @@ struct ARSurveyView: UIViewRepresentable {
                     .removeFromParentNode()
             }
             renderedIDs.removeAll()
-            // Also remove the beacon so it doesn't linger from an old session
+            arPoints.removeAll()
+
+            // Remove overlays
             beaconNode?.removeFromParentNode()
             beaconNode = nil
+            groundGridNode?.removeFromParentNode()
+            groundGridNode = nil
+            meshWireframeNode?.removeFromParentNode()
+            meshWireframeNode = nil
+            contourLinesNode?.removeFromParentNode()
+            contourLinesNode = nil
         }
 
         func updatePoints(
@@ -101,6 +119,7 @@ struct ARSurveyView: UIViewRepresentable {
                 scene.rootNode.childNode(withName: "pt_\(id)", recursively: false)?
                     .removeFromParentNode()
                 renderedIDs.remove(id)
+                arPoints.removeAll { $0.id == id }
             }
 
             // Add nodes for new points.
@@ -116,10 +135,20 @@ struct ARSurveyView: UIViewRepresentable {
 
                 let node = makePointNode(
                     at: SCNVector3(x, y, z),
-                    elevation: point.groundElevation
+                    elevation: point.groundElevation,
+                    elevMin: elevMin,
+                    elevMax: elevMax
                 )
                 node.name = "pt_\(key)"
                 scene.rootNode.addChildNode(node)
+
+                arPoints.append((id: key, x: x, y: y, z: z, elev: point.groundElevation))
+            }
+
+            // Update mesh wireframe and contour lines when we have enough points.
+            if arPoints.count >= 3 {
+                updateSurveyMesh(scene: scene, elevMin: elevMin, elevMax: elevMax)
+                updateContourLines(scene: scene, elevMin: elevMin, elevMax: elevMax)
             }
         }
 
@@ -129,37 +158,405 @@ struct ARSurveyView: UIViewRepresentable {
             updateBeacon(renderer: renderer)
         }
 
-        // MARK: - Point node builder
+        // MARK: - Point node builder (flat texture label)
 
-        private func makePointNode(at position: SCNVector3, elevation: Double) -> SCNNode {
+        private func makePointNode(
+            at position: SCNVector3,
+            elevation: Double,
+            elevMin: Double,
+            elevMax: Double
+        ) -> SCNNode {
             let root = SCNNode()
             root.position = position
 
-            // White sphere
-            let sphere = SCNSphere(radius: 0.04)
+            // White sphere marker
+            let sphere = SCNSphere(radius: 0.035)
             sphere.firstMaterial?.diffuse.contents  = UIColor.white
             sphere.firstMaterial?.emission.contents = UIColor.white.withAlphaComponent(0.5)
-            root.addChildNode(SCNNode(geometry: sphere))
+            let sphereNode = SCNNode(geometry: sphere)
+            root.addChildNode(sphereNode)
 
-            // Billboard elevation label
-            let label    = String(format: "%.1fm", elevation)
-            let text     = SCNText(string: label, extrusionDepth: 0.001)
-            text.font    = UIFont.monospacedSystemFont(ofSize: 0.07, weight: .bold)
-            text.firstMaterial?.diffuse.contents  = UIColor.white
-            text.firstMaterial?.emission.contents = UIColor.white.withAlphaComponent(0.9)
+            // Flat billboard elevation label (replaces broken SCNText geometry)
+            let label = String(format: "%.1fm", elevation)
+            let color = viridisColor(fraction: elevFraction(elevation, min: elevMin, max: elevMax))
+            let labelNode = makeTextPlaneNode(text: label, color: color)
+            labelNode.position = SCNVector3(0, 0.15, 0) // 15 cm above dot
 
-            let textNode = SCNNode(geometry: text)
-            let (minB, maxB) = textNode.boundingBox
-            // Centre the text horizontally around the sphere.
-            textNode.pivot    = SCNMatrix4MakeTranslation((maxB.x + minB.x) / 2, 0, 0)
-            textNode.position = SCNVector3(0, 0.07, 0)
-
-            let bb       = SCNBillboardConstraint()
-            bb.freeAxes  = .all
-            textNode.constraints = [bb]
-            root.addChildNode(textNode)
+            let bb = SCNBillboardConstraint()
+            bb.freeAxes = .all
+            labelNode.constraints = [bb]
+            root.addChildNode(labelNode)
 
             return root
+        }
+
+        /// Renders text into a UIImage, then maps it onto a small SCNPlane.
+        /// This avoids SCNText's broken 3D geometry and produces crisp, readable labels.
+        private func makeTextPlaneNode(text: String, color: UIColor) -> SCNNode {
+            let fontSize: CGFloat = 48
+            let font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: UIColor.white
+            ]
+            let textSize = (text as NSString).size(withAttributes: attrs)
+
+            let padding: CGFloat = 12
+            let imgW = textSize.width + padding * 2
+            let imgH = textSize.height + padding * 2
+
+            UIGraphicsBeginImageContextWithOptions(CGSize(width: imgW, height: imgH), false, 2.0)
+            defer { UIGraphicsEndImageContext() }
+
+            // Semi-transparent dark background pill
+            let ctx = UIGraphicsGetCurrentContext()!
+            ctx.setFillColor(UIColor(white: 0.0, alpha: 0.65).cgColor)
+            let rect = CGRect(x: 0, y: 0, width: imgW, height: imgH)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: imgH * 0.3)
+            path.fill()
+
+            // Colored left accent bar
+            ctx.setFillColor(color.cgColor)
+            let accentRect = CGRect(x: 4, y: imgH * 0.2, width: 4, height: imgH * 0.6)
+            UIBezierPath(roundedRect: accentRect, cornerRadius: 2).fill()
+
+            // Draw text
+            let textRect = CGRect(x: padding, y: padding * 0.5, width: textSize.width, height: textSize.height)
+            (text as NSString).draw(in: textRect, withAttributes: attrs)
+
+            guard let image = UIGraphicsGetImageFromCurrentImageContext() else {
+                return SCNNode()
+            }
+
+            // Map image to a plane sized for AR (roughly 12 cm wide)
+            let aspect = imgW / imgH
+            let planeH: CGFloat = 0.05
+            let planeW = planeH * aspect
+            let plane = SCNPlane(width: planeW, height: planeH)
+            plane.firstMaterial?.diffuse.contents = image
+            plane.firstMaterial?.isDoubleSided = true
+            // Emissive so it's visible regardless of scene lighting
+            plane.firstMaterial?.emission.contents = image
+            plane.firstMaterial?.emission.intensity = 0.5
+            plane.firstMaterial?.lightingModel = .constant
+
+            return SCNNode(geometry: plane)
+        }
+
+        // MARK: - Ground Grid
+
+        /// Creates or updates a wireframe grid at the beacon's ground level.
+        fileprivate func updateGroundGrid(scene: SCNScene, groundY: Float, cameraX: Float, cameraZ: Float) {
+            groundGridNode?.removeFromParentNode()
+
+            let gridSize: Float = 4.0     // 4×4 metre grid
+            let spacing: Float  = 0.25    // 25 cm cells
+
+            var vertices: [SCNVector3] = []
+            var indices: [UInt32] = []
+            var idx: UInt32 = 0
+
+            // Snap grid origin to spacing so it doesn't jitter as camera moves
+            let snapX = (cameraX / spacing).rounded() * spacing
+            let snapZ = (cameraZ / spacing).rounded() * spacing
+            let halfGrid = gridSize / 2.0
+
+            // Lines parallel to X axis
+            var z = snapZ - halfGrid
+            while z <= snapZ + halfGrid {
+                vertices.append(SCNVector3(snapX - halfGrid, groundY, z))
+                vertices.append(SCNVector3(snapX + halfGrid, groundY, z))
+                indices.append(idx); indices.append(idx + 1)
+                idx += 2
+                z += spacing
+            }
+
+            // Lines parallel to Z axis
+            var x = snapX - halfGrid
+            while x <= snapX + halfGrid {
+                vertices.append(SCNVector3(x, groundY, snapZ - halfGrid))
+                vertices.append(SCNVector3(x, groundY, snapZ + halfGrid))
+                indices.append(idx); indices.append(idx + 1)
+                idx += 2
+                x += spacing
+            }
+
+            guard !vertices.isEmpty else { return }
+
+            let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<SCNVector3>.size)
+            let vertexSource = SCNGeometrySource(
+                data: vertexData,
+                semantic: .vertex,
+                vectorCount: vertices.count,
+                usesFloatComponents: true,
+                componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0,
+                dataStride: MemoryLayout<SCNVector3>.size
+            )
+
+            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
+            let element = SCNGeometryElement(
+                data: indexData,
+                primitiveType: .line,
+                primitiveCount: indices.count / 2,
+                bytesPerIndex: MemoryLayout<UInt32>.size
+            )
+
+            let geometry = SCNGeometry(sources: [vertexSource], elements: [element])
+            let material = SCNMaterial()
+            material.diffuse.contents = UIColor(white: 1.0, alpha: 0.15)
+            material.emission.contents = UIColor(white: 1.0, alpha: 0.15)
+            material.lightingModel = .constant
+            material.isDoubleSided = true
+            geometry.materials = [material]
+
+            let node = SCNNode(geometry: geometry)
+            node.renderingOrder = -1
+            scene.rootNode.addChildNode(node)
+            groundGridNode = node
+        }
+
+        // MARK: - Survey Mesh Wireframe
+
+        /// Builds a fan-triangulation wireframe connecting all captured points.
+        private func updateSurveyMesh(scene: SCNScene, elevMin: Double, elevMax: Double) {
+            meshWireframeNode?.removeFromParentNode()
+
+            guard arPoints.count >= 3 else { return }
+
+            // Sort points by angle from centroid for fan triangulation
+            let cx = arPoints.map(\.x).reduce(0, +) / Float(arPoints.count)
+            let cz = arPoints.map(\.z).reduce(0, +) / Float(arPoints.count)
+
+            let sorted = arPoints.sorted { a, b in
+                atan2(a.z - cz, a.x - cx) < atan2(b.z - cz, b.x - cx)
+            }
+
+            var vertices: [SCNVector3] = []
+            var colors: [SCNVector3] = []
+            var indices: [UInt32] = []
+            var idx: UInt32 = 0
+
+            // Create perimeter edges connecting sorted points
+            for i in 0..<sorted.count {
+                let j = (i + 1) % sorted.count
+                let a = sorted[i]
+                let b = sorted[j]
+
+                vertices.append(SCNVector3(a.x, a.y, a.z))
+                vertices.append(SCNVector3(b.x, b.y, b.z))
+
+                let colA = viridisRGB(fraction: elevFraction(a.elev, min: elevMin, max: elevMax))
+                let colB = viridisRGB(fraction: elevFraction(b.elev, min: elevMin, max: elevMax))
+                colors.append(colA)
+                colors.append(colB)
+
+                indices.append(idx); indices.append(idx + 1)
+                idx += 2
+            }
+
+            guard !vertices.isEmpty else { return }
+
+            let vertexData = Data(bytes: vertices, count: vertices.count * MemoryLayout<SCNVector3>.size)
+            let vertexSource = SCNGeometrySource(
+                data: vertexData,
+                semantic: .vertex,
+                vectorCount: vertices.count,
+                usesFloatComponents: true,
+                componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0,
+                dataStride: MemoryLayout<SCNVector3>.size
+            )
+
+            let colorData = Data(bytes: colors, count: colors.count * MemoryLayout<SCNVector3>.size)
+            let colorSource = SCNGeometrySource(
+                data: colorData,
+                semantic: .color,
+                vectorCount: colors.count,
+                usesFloatComponents: true,
+                componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0,
+                dataStride: MemoryLayout<SCNVector3>.size
+            )
+
+            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
+            let element = SCNGeometryElement(
+                data: indexData,
+                primitiveType: .line,
+                primitiveCount: indices.count / 2,
+                bytesPerIndex: MemoryLayout<UInt32>.size
+            )
+
+            let geometry = SCNGeometry(sources: [vertexSource, colorSource], elements: [element])
+            let material = SCNMaterial()
+            material.lightingModel = .constant
+            material.isDoubleSided = true
+            geometry.materials = [material]
+
+            let node = SCNNode(geometry: geometry)
+            scene.rootNode.addChildNode(node)
+            meshWireframeNode = node
+        }
+
+        // MARK: - Contour Lines
+
+        /// Generates contour iso-lines by marching through triangle edges.
+        private func updateContourLines(scene: SCNScene, elevMin: Double, elevMax: Double) {
+            contourLinesNode?.removeFromParentNode()
+
+            guard arPoints.count >= 3 else { return }
+
+            let elevRange = elevMax - elevMin
+            guard elevRange > 0.01 else { return }
+
+            // Determine contour interval — aim for 3–8 lines
+            let interval: Double
+            if elevRange < 0.5 { interval = 0.1 }
+            else if elevRange < 2.0 { interval = 0.25 }
+            else if elevRange < 5.0 { interval = 0.5 }
+            else { interval = 1.0 }
+
+            // Build triangles (fan from centroid)
+            let cx = arPoints.map(\.x).reduce(0, +) / Float(arPoints.count)
+            let cz = arPoints.map(\.z).reduce(0, +) / Float(arPoints.count)
+
+            let sorted = arPoints.sorted { a, b in
+                atan2(a.z - cz, a.x - cx) < atan2(b.z - cz, b.x - cx)
+            }
+
+            let cy = arPoints.map(\.y).reduce(0, +) / Float(arPoints.count)
+            let cElev = arPoints.map(\.elev).reduce(0, +) / Double(arPoints.count)
+
+            // Build triangle list: each triangle = centroid + two adjacent perimeter points
+            var triPts: [(x: Float, y: Float, z: Float, e: Double)] = []
+            // Store as flat array of triples: [p0,p1,p2, p0,p1,p2, ...]
+            for i in 0..<sorted.count {
+                let j = (i + 1) % sorted.count
+                let a = sorted[i]
+                let b = sorted[j]
+                triPts.append((cx, cy, cz, cElev))
+                triPts.append((a.x, a.y, a.z, a.elev))
+                triPts.append((b.x, b.y, b.z, b.elev))
+            }
+
+            var contourVerts: [SCNVector3] = []
+            var contourColors: [SCNVector3] = []
+            var contourIndices: [UInt32] = []
+            var cIdx: UInt32 = 0
+
+            // March through each contour level
+            var level = (elevMin / interval).rounded(.up) * interval
+            while level <= elevMax {
+                let frac = elevFraction(level, min: elevMin, max: elevMax)
+                let rgb = viridisRGB(fraction: frac)
+
+                // Process each triangle
+                var ti = 0
+                while ti < triPts.count {
+                    let pts = [triPts[ti], triPts[ti + 1], triPts[ti + 2]]
+                    ti += 3
+
+                    var crossings: [(Float, Float, Float)] = []
+
+                    for ei in 0..<3 {
+                        let ej = (ei + 1) % 3
+                        let e0 = pts[ei].e
+                        let e1 = pts[ej].e
+                        guard (e0 - level) * (e1 - level) < 0 else { continue }
+
+                        let t = Float((level - e0) / (e1 - e0))
+                        let ix = pts[ei].x + t * (pts[ej].x - pts[ei].x)
+                        let iy = pts[ei].y + t * (pts[ej].y - pts[ei].y)
+                        let iz = pts[ei].z + t * (pts[ej].z - pts[ei].z)
+                        crossings.append((ix, iy, iz))
+                    }
+
+                    if crossings.count == 2 {
+                        contourVerts.append(SCNVector3(crossings[0].0, crossings[0].1, crossings[0].2))
+                        contourVerts.append(SCNVector3(crossings[1].0, crossings[1].1, crossings[1].2))
+                        contourColors.append(rgb)
+                        contourColors.append(rgb)
+                        contourIndices.append(cIdx); contourIndices.append(cIdx + 1)
+                        cIdx += 2
+                    }
+                }
+                level += interval
+            }
+
+            guard !contourVerts.isEmpty else { return }
+
+            let vertexData = Data(bytes: contourVerts, count: contourVerts.count * MemoryLayout<SCNVector3>.size)
+            let vertexSource = SCNGeometrySource(
+                data: vertexData,
+                semantic: .vertex,
+                vectorCount: contourVerts.count,
+                usesFloatComponents: true,
+                componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0,
+                dataStride: MemoryLayout<SCNVector3>.size
+            )
+
+            let colorData = Data(bytes: contourColors, count: contourColors.count * MemoryLayout<SCNVector3>.size)
+            let colorSource = SCNGeometrySource(
+                data: colorData,
+                semantic: .color,
+                vectorCount: contourColors.count,
+                usesFloatComponents: true,
+                componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0,
+                dataStride: MemoryLayout<SCNVector3>.size
+            )
+
+            let indexData = Data(bytes: contourIndices, count: contourIndices.count * MemoryLayout<UInt32>.size)
+            let element = SCNGeometryElement(
+                data: indexData,
+                primitiveType: .line,
+                primitiveCount: contourIndices.count / 2,
+                bytesPerIndex: MemoryLayout<UInt32>.size
+            )
+
+            let geometry = SCNGeometry(sources: [vertexSource, colorSource], elements: [element])
+            let material = SCNMaterial()
+            material.lightingModel = .constant
+            material.isDoubleSided = true
+            geometry.materials = [material]
+
+            let node = SCNNode(geometry: geometry)
+            node.renderingOrder = 1
+            scene.rootNode.addChildNode(node)
+            contourLinesNode = node
+        }
+
+        // MARK: - Color helpers
+
+        private func elevFraction(_ elev: Double, min eMin: Double, max eMax: Double) -> Double {
+            guard eMax > eMin else { return 0.5 }
+            return Swift.max(0, Swift.min(1, (elev - eMin) / (eMax - eMin)))
+        }
+
+        /// Viridis-inspired colour ramp for AR overlays (UIColor).
+        private func viridisColor(fraction: Double) -> UIColor {
+            let rgb = viridisRGB(fraction: fraction)
+            return UIColor(red: CGFloat(rgb.x), green: CGFloat(rgb.y), blue: CGFloat(rgb.z), alpha: 1.0)
+        }
+
+        /// Viridis-inspired colour ramp as SCNVector3 (r,g,b in 0…1).
+        private func viridisRGB(fraction: Double) -> SCNVector3 {
+            let f = Float(fraction)
+            // Simplified viridis: purple → teal → yellow
+            let r: Float = f < 0.5 ? 0.27 + f * 0.2 : 0.1 + f * 1.4
+            let g: Float = 0.1 + f * 0.8
+            let b: Float = f < 0.5 ? 0.5 + f * 0.3 : 0.9 - f * 0.8
+            return SCNVector3(
+                Swift.min(1, Swift.max(0, r)),
+                Swift.min(1, Swift.max(0, g)),
+                Swift.min(1, Swift.max(0, b))
+            )
         }
 
         // MARK: - Beacon
@@ -174,8 +571,7 @@ struct ARSurveyView: UIViewRepresentable {
                 return
             }
 
-            // Sample the centre pixel of the LiDAR depth map — same ROI centre
-            // that captureGroundDistance() uses for its median computation.
+            // Sample the centre pixel of the LiDAR depth map.
             let w = CVPixelBufferGetWidth(depthMap)
             let h = CVPixelBufferGetHeight(depthMap)
             CVPixelBufferLockBaseAddress(depthMap, .readOnly)
@@ -190,8 +586,7 @@ struct ARSurveyView: UIViewRepresentable {
                 return
             }
 
-            // Project centre ray to world space:
-            //   world_hit = camera_position + (-camera_forward) * depth
+            // Project centre ray to world space
             let cam     = frame.camera.transform
             let forward = simd_float3(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
             let origin  = simd_float3( cam.columns.3.x,  cam.columns.3.y,  cam.columns.3.z)
@@ -206,6 +601,14 @@ struct ARSurveyView: UIViewRepresentable {
                 }
                 self.beaconNode?.position = SCNVector3(hit.x, hit.y, hit.z)
                 self.beaconNode?.isHidden = false
+
+                // Update ground grid around camera position at beacon ground level
+                self.updateGroundGrid(
+                    scene: scene,
+                    groundY: hit.y,
+                    cameraX: origin.x,
+                    cameraZ: origin.z
+                )
             }
         }
 
