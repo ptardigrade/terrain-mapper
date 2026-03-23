@@ -173,7 +173,8 @@ struct ProgressiveResultsView: View {
 
                 Divider()
 
-                // Content area
+                // Content area — only Stats shows partial data during processing.
+                // Map/3D/Contours show a lightweight placeholder to avoid freezing.
                 Group {
                     switch selectedTab {
                     case .stats:
@@ -185,30 +186,11 @@ struct ProgressiveResultsView: View {
                             tabLoadingView(message: "Preparing data…")
                         }
                     case .scene3D:
-                        if let mesh = pipeline.partialMesh {
-                            TerrainSceneView(mesh: mesh)
-                                .ignoresSafeArea(edges: .bottom)
-                        } else {
-                            tabLoadingView(message: "Building 3D mesh…")
-                        }
+                        tabLoadingView(message: "Building 3D mesh…")
                     case .contours:
-                        if let contours = pipeline.partialContours {
-                            ContourScrollView(contours: contours)
-                                .ignoresSafeArea(edges: .bottom)
-                        } else {
-                            tabLoadingView(message: "Drawing contour lines…")
-                        }
+                        tabLoadingView(message: "Drawing contour lines…")
                     case .map:
-                        if let points = pipeline.partialPoints,
-                           let contours = pipeline.partialContours {
-                            PartialMapView(points: points, contours: contours)
-                                .ignoresSafeArea(edges: .bottom)
-                        } else if let points = pipeline.partialPoints {
-                            PartialMapView(points: points, contours: [])
-                                .ignoresSafeArea(edges: .bottom)
-                        } else {
-                            tabLoadingView(message: "Interpolating terrain…")
-                        }
+                        tabLoadingView(message: "Processing map data…")
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -229,7 +229,8 @@ final class ProcessingPipeline: ObservableObject {
         }
 
         // ── 4c. Integrate AR mesh vertices as supplementary points ────────
-        var validPoints = points.filter { !$0.isOutlier }
+        let surveyOnlyPoints = points.filter { !$0.isOutlier }
+        var validPoints = surveyOnlyPoints
         if !arMeshVertices.isEmpty,
            let ark = arkitPositions, let heading = arkitAnchorHeading {
             updateProgress("Integrating AR mesh data…")
@@ -258,11 +259,14 @@ final class ProcessingPipeline: ObservableObject {
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
-        // Always generate from the interpolated grid — it produces a smooth,
-        // regular surface and avoids O(n²) Bowyer-Watson on 100K+ AR mesh points.
+        // Generate from captured survey points only (not AR mesh points) via
+        // Bowyer-Watson Delaunay — fast with ~64 points and produces a clean
+        // triangulation that matches the actual measured surface.
         updateProgress("Building 3D mesh…")
         let meshGen = MeshGenerator()
-        let mesh = meshGen.generateMesh(from: grid)
+        let mesh = surveyOnlyPoints.count >= 3
+            ? meshGen.generateMesh(from: surveyOnlyPoints)
+            : meshGen.generateMesh(from: grid)
         sendResult.sendMesh(mesh)
         sendResult.sendProgress(0.75)
 

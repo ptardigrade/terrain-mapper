@@ -217,13 +217,12 @@ struct ARSurveyView: UIViewRepresentable {
 
         // MARK: - Surveyed-area overlay (white mesh + white thick contours)
 
-        /// Periodically extracts mesh triangles inside the convex hull of captured
-        /// points, then renders a white wireframe mesh and thick white contour
-        /// ribbons.  All heavy work runs on a background queue.
+        /// Periodically extracts mesh triangles.  When < 3 captured points,
+        /// ALL ground-facing triangles are rendered as the orange outside mesh.
+        /// With 3+ points, triangles are split inside/outside the convex hull.
         private func updateSurveyedAreaOverlay(renderer: SCNSceneRenderer, time: TimeInterval) {
             guard !isComputingOverlay,
-                  time - lastOverlayTime > 2.0,
-                  capturedXZPositions.count >= 3 else { return }
+                  time - lastOverlayTime > 2.0 else { return }
             lastOverlayTime = time
 
             guard let scnView = renderer as? ARSCNView,
@@ -233,14 +232,26 @@ struct ARSurveyView: UIViewRepresentable {
             guard !meshAnchors.isEmpty else { return }
 
             let hullPts = capturedXZPositions
+            let hasHull = hullPts.count >= 3
             isComputingOverlay = true
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let hull = Self.convexHull2D(hullPts)
-                let expanded = Self.expandedHull(hull, by: 0.3)  // 30 cm buffer
-                let (meshGeo, outsideMeshGeo, contourGeo) = Self.computeSurveyedAreaGeometry(
-                    from: meshAnchors, hull: expanded
-                )
+                let meshGeo: SCNGeometry?
+                let outsideMeshGeo: SCNGeometry?
+                let contourGeo: SCNGeometry?
+
+                if hasHull {
+                    let hull = Self.convexHull2D(hullPts)
+                    let expanded = Self.expandedHull(hull, by: 0.3)
+                    (meshGeo, outsideMeshGeo, contourGeo) = Self.computeSurveyedAreaGeometry(
+                        from: meshAnchors, hull: expanded
+                    )
+                } else {
+                    // No hull yet — show all ground-facing triangles as orange
+                    meshGeo = nil
+                    contourGeo = nil
+                    outsideMeshGeo = Self.computeAllMeshGeometry(from: meshAnchors)
+                }
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self, let scene = self.sceneView?.scene else {
@@ -490,6 +501,86 @@ struct ARSurveyView: UIViewRepresentable {
             }
 
             return (meshGeometry, outsideGeometry, contourGeometry)
+        }
+
+        /// Renders ALL ground-facing AR mesh triangles as orange infill.
+        /// Used before 3 points are captured (no convex hull available).
+        private static func computeAllMeshGeometry(from anchors: [ARMeshAnchor]) -> SCNGeometry? {
+            var allVerts: [simd_float3] = []
+            var allIndices: [UInt32] = []
+
+            for anchor in anchors {
+                let geo = anchor.geometry
+                let transform = anchor.transform
+
+                let vBuf = geo.vertices.buffer.contents().advanced(by: geo.vertices.offset)
+                var verts: [simd_float3] = []
+                verts.reserveCapacity(geo.vertices.count)
+                for i in 0..<geo.vertices.count {
+                    let ptr = vBuf.advanced(by: i * geo.vertices.stride)
+                        .assumingMemoryBound(to: SIMD3<Float>.self)
+                    let local = simd_float4(ptr.pointee.x, ptr.pointee.y, ptr.pointee.z, 1)
+                    let world = transform * local
+                    verts.append(simd_float3(world.x, world.y, world.z))
+                }
+
+                let fBuf = geo.faces.buffer.contents()
+                let bpi = geo.faces.bytesPerIndex
+                let icpp = geo.faces.indexCountPerPrimitive
+
+                for i in 0..<geo.faces.count {
+                    let offset = i * icpp * bpi
+                    let a, b, c: Int
+                    if bpi == 4 {
+                        let ptr = fBuf.advanced(by: offset).assumingMemoryBound(to: UInt32.self)
+                        a = Int(ptr[0]); b = Int(ptr[1]); c = Int(ptr[2])
+                    } else {
+                        let ptr = fBuf.advanced(by: offset).assumingMemoryBound(to: UInt16.self)
+                        a = Int(ptr[0]); b = Int(ptr[1]); c = Int(ptr[2])
+                    }
+                    guard a < verts.count, b < verts.count, c < verts.count else { continue }
+
+                    let va = verts[a], vb = verts[b], vc = verts[c]
+                    let edge1 = vb - va, edge2 = vc - va
+                    let cross = simd_cross(edge1, edge2)
+                    let len = simd_length(cross)
+                    guard len > 1e-8 else { continue }
+                    let normal = cross / len
+                    guard normal.y > 0.5 else { continue }
+
+                    let base = UInt32(allVerts.count)
+                    allVerts.append(va); allVerts.append(vb); allVerts.append(vc)
+                    allIndices.append(base); allIndices.append(base + 1); allIndices.append(base + 2)
+                }
+            }
+
+            guard !allVerts.isEmpty else { return nil }
+
+            let vertexData = Data(bytes: allVerts, count: allVerts.count * MemoryLayout<simd_float3>.size)
+            let vertexSource = SCNGeometrySource(
+                data: vertexData, semantic: .vertex, vectorCount: allVerts.count,
+                usesFloatComponents: true, componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0, dataStride: MemoryLayout<simd_float3>.size
+            )
+            let indexData = Data(bytes: allIndices, count: allIndices.count * MemoryLayout<UInt32>.size)
+            let element = SCNGeometryElement(
+                data: indexData, primitiveType: .triangles,
+                primitiveCount: allIndices.count / 3,
+                bytesPerIndex: MemoryLayout<UInt32>.size
+            )
+            let geometry = SCNGeometry(sources: [vertexSource], elements: [element])
+            let mat = SCNMaterial()
+            mat.diffuse.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.18)
+            mat.emission.contents = UIColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.5)
+            mat.emission.intensity = 0.7
+            mat.lightingModel = .constant
+            mat.isDoubleSided = true
+            mat.readsFromDepthBuffer = true
+            mat.writesToDepthBuffer = false
+            mat.transparencyMode = .dualLayer
+            geometry.materials = [mat]
+            return geometry
         }
 
         /// Builds thick contour lines as flat ribbon quads (two triangles per
