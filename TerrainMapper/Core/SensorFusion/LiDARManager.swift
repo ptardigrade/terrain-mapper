@@ -56,6 +56,12 @@ final class LiDARManager: NSObject, ObservableObject {
     @Published private(set) var isCapturing: Bool = false
     @Published var captureProgress: Double = 0.0
 
+    /// Live center-pixel LiDAR depth (metres).  Updated from the ARSession
+    /// delegate (~30 Hz) but throttled to avoid excessive SwiftUI redraws —
+    /// only publishes when the value crosses the capture-distance threshold
+    /// or changes by more than 5 cm.
+    @Published private(set) var centerDepthDistance: Float = 0.0
+
     // MARK: - Configuration
 
     /// Number of frames to accumulate before computing the median.
@@ -333,8 +339,17 @@ extension LiDARManager: ARSessionDelegate {
         // Only hop to MainActor to update state variables.
         guard let depthData = frame.sceneDepth?.depthMap else { return }
         let samples = LiDARManager.extractDepthSamples(from: depthData, roiFraction: 0.20)
+        let centerDepth = LiDARManager.readCenterDepth(from: depthData)
 
         Task { @MainActor in
+            // Throttle center-depth publishing: only update when crossing the
+            // capture-distance threshold or changing by > 5 cm.
+            let crossedThreshold = (centerDepth > Self.maxCaptureDistance) !=
+                                   (self.centerDepthDistance > Self.maxCaptureDistance)
+            if crossedThreshold || abs(centerDepth - self.centerDepthDistance) > 0.05 {
+                self.centerDepthDistance = centerDepth
+            }
+
             guard self.isCapturing else { return }
             self.accumulateSamples(samples)
         }
@@ -382,6 +397,20 @@ extension LiDARManager: ARSessionDelegate {
             }
         }
         return result
+    }
+
+    /// Reads the single center-pixel depth from the LiDAR depth map.
+    /// Returns 0 if the depth is outside the valid range (0.1–8.0 m).
+    private nonisolated static func readCenterDepth(from depthMap: CVPixelBuffer) -> Float {
+        let w = CVPixelBufferGetWidth(depthMap)
+        let h = CVPixelBufferGetHeight(depthMap)
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        let base = CVPixelBufferGetBaseAddress(depthMap)!
+            .assumingMemoryBound(to: Float32.self)
+        let bpr = CVPixelBufferGetBytesPerRow(depthMap)
+        let depth = base[(h / 2) * (bpr / MemoryLayout<Float32>.size) + w / 2]
+        return (depth > 0.1 && depth < 8.0) ? depth : 0.0
     }
 
     // MARK: - Frame accumulation (MainActor)

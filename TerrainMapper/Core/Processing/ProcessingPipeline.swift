@@ -38,6 +38,16 @@ final class ProcessingPipeline: ObservableObject {
 
     @Published private(set) var isProcessing: Bool = false
     @Published fileprivate(set) var progressMessage: String = ""
+    @Published private(set) var progress: Double = 0.0
+
+    // MARK: - Partial results (published progressively as pipeline stages complete)
+
+    @Published private(set) var partialSession: SurveySession?
+    @Published private(set) var partialPoints: [SurveyPoint]?
+    @Published private(set) var partialOutliers: [SurveyPoint]?
+    @Published private(set) var partialMesh: TerrainMesh?
+    @Published private(set) var partialContours: [ContourLine]?
+    @Published private(set) var partialStats: ProcessingStats?
 
     // MARK: - Sub-processors
 
@@ -63,6 +73,15 @@ final class ProcessingPipeline: ObservableObject {
     ///     supplementary points for the interpolation grid.
     /// - Returns: A `ProcessedTerrain` with all derived products.
     func process(session: SurveySession, arMeshVertices: [[Float]] = []) async -> ProcessedTerrain {
+        // Clear previous partial results
+        partialSession = session
+        partialPoints = nil
+        partialOutliers = nil
+        partialMesh = nil
+        partialContours = nil
+        partialStats = nil
+        progress = 0.0
+
         isProcessing = true
         progressMessage = "Starting…"
         let startTime = Date()
@@ -78,6 +97,7 @@ final class ProcessingPipeline: ObservableObject {
         let capturedMeshVertices        = arMeshVertices
 
         let sender = ProgressSender(self)
+        let resultSender = ResultSender(self)
 
         let result = await Task.detached(priority: .userInitiated) {
             ProcessingPipeline.runPipeline(
@@ -92,12 +112,14 @@ final class ProcessingPipeline: ObservableObject {
                 arkitPositions:        capturedArkitPositions,
                 arkitAnchorHeading:    capturedArkitHeading,
                 arMeshVertices:        capturedMeshVertices,
-                updateProgress:        { msg in sender.send(msg) }
+                updateProgress:        { msg in sender.send(msg) },
+                sendResult:            resultSender
             )
         }.value
 
         isProcessing = false
         progressMessage = ""
+        progress = 1.0
         return result
     }
 
@@ -115,7 +137,8 @@ final class ProcessingPipeline: ObservableObject {
         arkitPositions:       [String: [Double]]?,
         arkitAnchorHeading:   Double?,
         arMeshVertices:       [[Float]],
-        updateProgress:       (String) -> Void
+        updateProgress:       (String) -> Void,
+        sendResult:           ResultSender
     ) -> ProcessedTerrain {
         var points = session.points
         var pathPoints = session.pathTrackPoints
@@ -219,6 +242,10 @@ final class ProcessingPipeline: ObservableObject {
             validPoints.append(contentsOf: meshPts)
         }
 
+        // Publish points (Stats tab can show basic info)
+        sendResult.sendPoints(validPoints, outliers: points.filter(\.isOutlier))
+        sendResult.sendProgress(0.4)
+
         // ── 5. Interpolation → grid ───────────────────────────────────────
         updateProgress("Interpolating terrain grid…")
         var interp = TerrainInterpolator()
@@ -228,6 +255,7 @@ final class ProcessingPipeline: ObservableObject {
             pathPoints: pathPoints,
             method:     interpolationMethod
         )
+        sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
         updateProgress("Building 3D mesh…")
@@ -235,11 +263,15 @@ final class ProcessingPipeline: ObservableObject {
         let mesh = validPoints.count >= 3
             ? meshGen.generateMesh(from: validPoints)
             : meshGen.generateMesh(from: grid)
+        sendResult.sendMesh(mesh)
+        sendResult.sendProgress(0.75)
 
         // ── 7. Contour extraction ──────────────────────────────────────────
         updateProgress("Drawing contour lines…")
         let cGen = ContourGenerator()
         let contours = cGen.generateContours(from: grid, interval: contourInterval)
+        sendResult.sendContours(contours)
+        sendResult.sendProgress(0.9)
 
         // ── Build stats ────────────────────────────────────────────────────
         updateProgress("Computing statistics…")
@@ -254,6 +286,8 @@ final class ProcessingPipeline: ObservableObject {
             hasArkitData: hasArkitData,
             arkitPositions: arkitPositions
         )
+        sendResult.sendStats(stats)
+        sendResult.sendProgress(1.0)
 
         return ProcessedTerrain(
             session:       session,
@@ -600,6 +634,45 @@ private final class ProgressSender: @unchecked Sendable {
     func send(_ message: String) {
         Task { @MainActor [weak self] in
             self?.pipeline?.progressMessage = message
+        }
+    }
+}
+
+// MARK: - ResultSender
+
+/// Bridges partial pipeline results to @MainActor-isolated published properties.
+final class ResultSender: @unchecked Sendable {
+    private weak var pipeline: ProcessingPipeline?
+    init(_ pipeline: ProcessingPipeline) { self.pipeline = pipeline }
+
+    func sendProgress(_ value: Double) {
+        Task { @MainActor [weak self] in
+            self?.pipeline?.progress = value
+        }
+    }
+
+    func sendPoints(_ valid: [SurveyPoint], outliers: [SurveyPoint]) {
+        Task { @MainActor [weak self] in
+            self?.pipeline?.partialPoints = valid
+            self?.pipeline?.partialOutliers = outliers
+        }
+    }
+
+    func sendMesh(_ mesh: TerrainMesh) {
+        Task { @MainActor [weak self] in
+            self?.pipeline?.partialMesh = mesh
+        }
+    }
+
+    func sendContours(_ contours: [ContourLine]) {
+        Task { @MainActor [weak self] in
+            self?.pipeline?.partialContours = contours
+        }
+    }
+
+    func sendStats(_ stats: ProcessingStats) {
+        Task { @MainActor [weak self] in
+            self?.pipeline?.partialStats = stats
         }
     }
 }

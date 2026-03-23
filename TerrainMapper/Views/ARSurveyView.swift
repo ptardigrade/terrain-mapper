@@ -91,6 +91,7 @@ struct ARSurveyView: UIViewRepresentable {
 
         fileprivate var contourLinesNode: SCNNode?
         fileprivate var surveyedMeshNode: SCNNode?
+        fileprivate var outsideMeshNode: SCNNode?
 
         /// XZ positions (ARKit world space) of captured survey points.
         /// Updated every time updatePoints is called; used to compute the
@@ -122,6 +123,8 @@ struct ARSurveyView: UIViewRepresentable {
             contourLinesNode = nil
             surveyedMeshNode?.removeFromParentNode()
             surveyedMeshNode = nil
+            outsideMeshNode?.removeFromParentNode()
+            outsideMeshNode = nil
             capturedXZPositions.removeAll()
         }
 
@@ -235,7 +238,7 @@ struct ARSurveyView: UIViewRepresentable {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let hull = Self.convexHull2D(hullPts)
                 let expanded = Self.expandedHull(hull, by: 0.3)  // 30 cm buffer
-                let (meshGeo, contourGeo) = Self.computeSurveyedAreaGeometry(
+                let (meshGeo, outsideMeshGeo, contourGeo) = Self.computeSurveyedAreaGeometry(
                     from: meshAnchors, hull: expanded
                 )
 
@@ -246,13 +249,22 @@ struct ARSurveyView: UIViewRepresentable {
                     }
                     self.isComputingOverlay = false
 
-                    // Replace surveyed-area mesh
+                    // Replace surveyed-area mesh (white, inside hull)
                     self.surveyedMeshNode?.removeFromParentNode()
                     if let geo = meshGeo {
                         let node = SCNNode(geometry: geo)
                         node.renderingOrder = 0
                         scene.rootNode.addChildNode(node)
                         self.surveyedMeshNode = node
+                    }
+
+                    // Replace outside mesh (green, outside hull)
+                    self.outsideMeshNode?.removeFromParentNode()
+                    if let geo = outsideMeshGeo {
+                        let node = SCNNode(geometry: geo)
+                        node.renderingOrder = -1
+                        scene.rootNode.addChildNode(node)
+                        self.outsideMeshNode = node
                     }
 
                     // Replace contour lines
@@ -272,16 +284,18 @@ struct ARSurveyView: UIViewRepresentable {
         private static func computeSurveyedAreaGeometry(
             from anchors: [ARMeshAnchor],
             hull: [simd_float2]
-        ) -> (mesh: SCNGeometry?, contours: SCNGeometry?) {
+        ) -> (mesh: SCNGeometry?, outsideMesh: SCNGeometry?, contours: SCNGeometry?) {
 
             struct WorldTri {
                 let a: simd_float3, b: simd_float3, c: simd_float3
             }
 
-            // ── Extract ground-facing triangles inside the hull ──────────
-            var triangles: [WorldTri] = []
-            var allVerts: [simd_float3] = []   // for wireframe
-            var allIndices: [UInt32] = []
+            // ── Extract ground-facing triangles, split inside/outside hull ─
+            var triangles: [WorldTri] = []           // inside hull (for contours)
+            var insideVerts: [simd_float3] = []      // white wireframe
+            var insideIndices: [UInt32] = []
+            var outsideVerts: [simd_float3] = []     // green wireframe
+            var outsideIndices: [UInt32] = []
             var yMin: Float = .greatestFiniteMagnitude
             var yMax: Float = -.greatestFiniteMagnitude
 
@@ -330,42 +344,52 @@ struct ARSurveyView: UIViewRepresentable {
                     // Centroid inside hull check (XZ plane)
                     let cx = (va.x + vb.x + vc.x) / 3.0
                     let cz = (va.z + vb.z + vc.z) / 3.0
-                    guard pointInConvexHull(simd_float2(cx, cz), hull: hull) else { continue }
+                    let isInside = pointInConvexHull(simd_float2(cx, cz), hull: hull)
 
-                    triangles.append(WorldTri(a: va, b: vb, c: vc))
+                    if isInside {
+                        triangles.append(WorldTri(a: va, b: vb, c: vc))
 
-                    let base = UInt32(allVerts.count)
-                    allVerts.append(va)
-                    allVerts.append(vb)
-                    allVerts.append(vc)
-                    allIndices.append(base)
-                    allIndices.append(base + 1)
-                    allIndices.append(base + 2)
+                        let base = UInt32(insideVerts.count)
+                        insideVerts.append(va)
+                        insideVerts.append(vb)
+                        insideVerts.append(vc)
+                        insideIndices.append(base)
+                        insideIndices.append(base + 1)
+                        insideIndices.append(base + 2)
 
-                    yMin = Swift.min(yMin, va.y, vb.y, vc.y)
-                    yMax = Swift.max(yMax, va.y, vb.y, vc.y)
+                        yMin = Swift.min(yMin, va.y, vb.y, vc.y)
+                        yMax = Swift.max(yMax, va.y, vb.y, vc.y)
+                    } else {
+                        let base = UInt32(outsideVerts.count)
+                        outsideVerts.append(va)
+                        outsideVerts.append(vb)
+                        outsideVerts.append(vc)
+                        outsideIndices.append(base)
+                        outsideIndices.append(base + 1)
+                        outsideIndices.append(base + 2)
+                    }
                 }
             }
 
-            // ── Build white wireframe mesh geometry ──────────────────────
+            // ── Build white wireframe mesh (inside hull) ─────────────────
             var meshGeometry: SCNGeometry?
-            if !allVerts.isEmpty {
-                let vertexData = Data(bytes: allVerts, count: allVerts.count * MemoryLayout<simd_float3>.size)
+            if !insideVerts.isEmpty {
+                let vertexData = Data(bytes: insideVerts, count: insideVerts.count * MemoryLayout<simd_float3>.size)
                 let vertexSource = SCNGeometrySource(
                     data: vertexData,
                     semantic: .vertex,
-                    vectorCount: allVerts.count,
+                    vectorCount: insideVerts.count,
                     usesFloatComponents: true,
                     componentsPerVector: 3,
                     bytesPerComponent: MemoryLayout<Float>.size,
                     dataOffset: 0,
                     dataStride: MemoryLayout<simd_float3>.size
                 )
-                let indexData = Data(bytes: allIndices, count: allIndices.count * MemoryLayout<UInt32>.size)
+                let indexData = Data(bytes: insideIndices, count: insideIndices.count * MemoryLayout<UInt32>.size)
                 let element = SCNGeometryElement(
                     data: indexData,
                     primitiveType: .triangles,
-                    primitiveCount: allIndices.count / 3,
+                    primitiveCount: insideIndices.count / 3,
                     bytesPerIndex: MemoryLayout<UInt32>.size
                 )
                 let geo = SCNGeometry(sources: [vertexSource], elements: [element])
@@ -382,7 +406,42 @@ struct ARSurveyView: UIViewRepresentable {
                 meshGeometry = geo
             }
 
-            // ── Build white contour ribbon geometry ──────────────────────
+            // ── Build green wireframe mesh (outside hull) ────────────────
+            var outsideGeometry: SCNGeometry?
+            if !outsideVerts.isEmpty {
+                let vertexData = Data(bytes: outsideVerts, count: outsideVerts.count * MemoryLayout<simd_float3>.size)
+                let vertexSource = SCNGeometrySource(
+                    data: vertexData,
+                    semantic: .vertex,
+                    vectorCount: outsideVerts.count,
+                    usesFloatComponents: true,
+                    componentsPerVector: 3,
+                    bytesPerComponent: MemoryLayout<Float>.size,
+                    dataOffset: 0,
+                    dataStride: MemoryLayout<simd_float3>.size
+                )
+                let indexData = Data(bytes: outsideIndices, count: outsideIndices.count * MemoryLayout<UInt32>.size)
+                let element = SCNGeometryElement(
+                    data: indexData,
+                    primitiveType: .triangles,
+                    primitiveCount: outsideIndices.count / 3,
+                    bytesPerIndex: MemoryLayout<UInt32>.size
+                )
+                let geo = SCNGeometry(sources: [vertexSource], elements: [element])
+                let mat = SCNMaterial()
+                mat.fillMode = .lines
+                mat.diffuse.contents = UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.3)
+                mat.emission.contents = UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.4)
+                mat.emission.intensity = 0.6
+                mat.lightingModel = .constant
+                mat.isDoubleSided = true
+                mat.readsFromDepthBuffer = true
+                mat.writesToDepthBuffer = false
+                geo.materials = [mat]
+                outsideGeometry = geo
+            }
+
+            // ── Build smooth contour ribbon geometry ─────────────────────
             var contourGeometry: SCNGeometry?
             if !triangles.isEmpty {
                 let range = yMax - yMin
@@ -395,10 +454,11 @@ struct ARSurveyView: UIViewRepresentable {
                     else if range < 8.0 { interval = 0.5 }
                     else { interval = 1.0 }
 
-                    // Collect contour line segments
-                    var segments: [(simd_float3, simd_float3)] = []
+                    // Collect contour segments per elevation level, then stitch + smooth
+                    var allPolylines: [[simd_float3]] = []
                     var level = (yMin / interval).rounded(.up) * interval
                     while level <= yMax {
+                        var levelSegments: [(simd_float3, simd_float3)] = []
                         for tri in triangles {
                             let pts = [tri.a, tri.b, tri.c]
                             var crossings: [simd_float3] = []
@@ -410,19 +470,25 @@ struct ARSurveyView: UIViewRepresentable {
                                 crossings.append(pts[ei] + t * (pts[ej] - pts[ei]))
                             }
                             if crossings.count == 2 {
-                                segments.append((crossings[0], crossings[1]))
+                                levelSegments.append((crossings[0], crossings[1]))
                             }
+                        }
+                        // Stitch segments into polylines, then smooth
+                        let stitched = stitchContourSegments3D(levelSegments)
+                        for polyline in stitched where polyline.count >= 2 {
+                            let smoothed = chaikinSmooth(polyline, iterations: 2)
+                            allPolylines.append(smoothed)
                         }
                         level += interval
                     }
 
-                    if !segments.isEmpty {
-                        contourGeometry = makeContourRibbonGeometry(segments: segments)
+                    if !allPolylines.isEmpty {
+                        contourGeometry = makeContourRibbonFromPolylines(allPolylines)
                     }
                 }
             }
 
-            return (meshGeometry, contourGeometry)
+            return (meshGeometry, outsideGeometry, contourGeometry)
         }
 
         /// Builds thick contour lines as flat ribbon quads (two triangles per
@@ -469,6 +535,182 @@ struct ARSurveyView: UIViewRepresentable {
                 indices.append(base + 1)
                 indices.append(base + 3)
                 indices.append(base + 2)
+            }
+
+            let vertexData = Data(bytes: verts, count: verts.count * MemoryLayout<simd_float3>.size)
+            let vertexSource = SCNGeometrySource(
+                data: vertexData,
+                semantic: .vertex,
+                vectorCount: verts.count,
+                usesFloatComponents: true,
+                componentsPerVector: 3,
+                bytesPerComponent: MemoryLayout<Float>.size,
+                dataOffset: 0,
+                dataStride: MemoryLayout<simd_float3>.size
+            )
+            let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
+            let element = SCNGeometryElement(
+                data: indexData,
+                primitiveType: .triangles,
+                primitiveCount: indices.count / 3,
+                bytesPerIndex: MemoryLayout<UInt32>.size
+            )
+
+            let geo = SCNGeometry(sources: [vertexSource], elements: [element])
+            let mat = SCNMaterial()
+            mat.diffuse.contents = UIColor(white: 1.0, alpha: 0.85)
+            mat.emission.contents = UIColor(white: 1.0, alpha: 0.9)
+            mat.emission.intensity = 1.0
+            mat.lightingModel = .constant
+            mat.isDoubleSided = true
+            mat.readsFromDepthBuffer = true
+            mat.writesToDepthBuffer = false
+            geo.materials = [mat]
+            return geo
+        }
+
+        // MARK: - Contour stitching + smoothing
+
+        /// Stitches isolated contour segments into connected polylines using
+        /// quantized endpoint matching (1mm precision).
+        private static func stitchContourSegments3D(
+            _ segments: [(simd_float3, simd_float3)]
+        ) -> [[simd_float3]] {
+            guard !segments.isEmpty else { return [] }
+
+            // Quantize endpoints to 1mm grid for adjacency matching
+            typealias Key = SIMD3<Int32>
+            func quantize(_ p: simd_float3) -> Key {
+                Key(Int32(round(p.x * 1000)),
+                    Int32(round(p.y * 1000)),
+                    Int32(round(p.z * 1000)))
+            }
+
+            // Build adjacency: endpoint key → [(segment index, which end: 0=start, 1=end)]
+            var adjacency: [Key: [(Int, Int)]] = [:]
+            for (i, seg) in segments.enumerated() {
+                let k0 = quantize(seg.0)
+                let k1 = quantize(seg.1)
+                adjacency[k0, default: []].append((i, 0))
+                adjacency[k1, default: []].append((i, 1))
+            }
+
+            var visited = [Bool](repeating: false, count: segments.count)
+            var polylines: [[simd_float3]] = []
+
+            for startIdx in 0..<segments.count {
+                guard !visited[startIdx] else { continue }
+                visited[startIdx] = true
+
+                // Start a polyline with this segment
+                var chain: [simd_float3] = [segments[startIdx].0, segments[startIdx].1]
+
+                // Extend forward from the end
+                var currentKey = quantize(chain.last!)
+                while true {
+                    guard let neighbors = adjacency[currentKey] else { break }
+                    var found = false
+                    for (ni, nEnd) in neighbors {
+                        guard !visited[ni] else { continue }
+                        visited[ni] = true
+                        let seg = segments[ni]
+                        // nEnd tells us which end matched — append the other end
+                        let nextPt = nEnd == 0 ? seg.1 : seg.0
+                        chain.append(nextPt)
+                        currentKey = quantize(nextPt)
+                        found = true
+                        break
+                    }
+                    if !found { break }
+                }
+
+                // Extend backward from the start
+                currentKey = quantize(chain.first!)
+                while true {
+                    guard let neighbors = adjacency[currentKey] else { break }
+                    var found = false
+                    for (ni, nEnd) in neighbors {
+                        guard !visited[ni] else { continue }
+                        visited[ni] = true
+                        let seg = segments[ni]
+                        let nextPt = nEnd == 0 ? seg.1 : seg.0
+                        chain.insert(nextPt, at: 0)
+                        currentKey = quantize(nextPt)
+                        found = true
+                        break
+                    }
+                    if !found { break }
+                }
+
+                polylines.append(chain)
+            }
+
+            return polylines
+        }
+
+        /// Chaikin corner-cutting subdivision for smooth curves.
+        /// Each iteration replaces each edge with two points at 25% and 75%.
+        private static func chaikinSmooth(
+            _ points: [simd_float3],
+            iterations: Int = 2
+        ) -> [simd_float3] {
+            guard points.count >= 3 else { return points }
+            var pts = points
+            for _ in 0..<iterations {
+                var smoothed: [simd_float3] = []
+                smoothed.reserveCapacity(pts.count * 2)
+                smoothed.append(pts[0])  // keep first point
+                for i in 0..<(pts.count - 1) {
+                    let p0 = pts[i], p1 = pts[i + 1]
+                    smoothed.append(p0 * 0.75 + p1 * 0.25)
+                    smoothed.append(p0 * 0.25 + p1 * 0.75)
+                }
+                smoothed.append(pts.last!)  // keep last point
+                pts = smoothed
+            }
+            return pts
+        }
+
+        /// Builds contour ribbon geometry from stitched + smoothed polylines.
+        private static func makeContourRibbonFromPolylines(
+            _ polylines: [[simd_float3]]
+        ) -> SCNGeometry {
+            let halfWidth: Float = 0.012
+            let up = simd_float3(0, 1, 0)
+            let lift = simd_float3(0, 0.003, 0)
+
+            var verts: [simd_float3] = []
+            var indices: [UInt32] = []
+
+            for polyline in polylines {
+                for i in 0..<(polyline.count - 1) {
+                    let p0 = polyline[i], p1 = polyline[i + 1]
+                    let dir = p1 - p0
+                    let len = simd_length(dir)
+                    guard len > 1e-6 else { continue }
+
+                    let fwd = dir / len
+                    var perp = simd_cross(fwd, up)
+                    let perpLen = simd_length(perp)
+                    if perpLen < 1e-6 {
+                        perp = simd_float3(1, 0, 0) * halfWidth
+                    } else {
+                        perp = (perp / perpLen) * halfWidth
+                    }
+
+                    let base = UInt32(verts.count)
+                    verts.append(p0 - perp + lift)
+                    verts.append(p0 + perp + lift)
+                    verts.append(p1 - perp + lift)
+                    verts.append(p1 + perp + lift)
+
+                    indices.append(base)
+                    indices.append(base + 1)
+                    indices.append(base + 2)
+                    indices.append(base + 1)
+                    indices.append(base + 3)
+                    indices.append(base + 2)
+                }
             }
 
             let vertexData = Data(bytes: verts, count: verts.count * MemoryLayout<simd_float3>.size)
@@ -672,6 +914,7 @@ struct ARSurveyView: UIViewRepresentable {
         // MARK: - Beacon
 
         private var beaconNode: SCNNode?
+        private var beaconIsTooFar: Bool = false
 
         private func updateBeacon(renderer: SCNSceneRenderer) {
             guard let scnView   = renderer as? ARSCNView,
@@ -699,6 +942,7 @@ struct ARSurveyView: UIViewRepresentable {
             let forward = simd_float3(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
             let origin  = simd_float3( cam.columns.3.x,  cam.columns.3.y,  cam.columns.3.z)
             let hit     = origin + forward * centerDepth
+            let isTooFar = centerDepth > LiDARManager.maxCaptureDistance
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -709,6 +953,7 @@ struct ARSurveyView: UIViewRepresentable {
                 }
                 self.beaconNode?.position = SCNVector3(hit.x, hit.y, hit.z)
                 self.beaconNode?.isHidden = false
+                self.updateBeaconColor(tooFar: isTooFar)
             }
         }
 
@@ -739,6 +984,37 @@ struct ARSurveyView: UIViewRepresentable {
             root.constraints = [bb]
 
             return root
+        }
+
+        /// Switches beacon ring + dot between green (in range) and red (too far).
+        private func updateBeaconColor(tooFar: Bool) {
+            guard tooFar != beaconIsTooFar else { return }
+            beaconIsTooFar = tooFar
+            guard let beacon = beaconNode else { return }
+
+            let color: UIColor = tooFar
+                ? UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 0.9)
+                : UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.9)
+            let emissionColor: UIColor = tooFar
+                ? UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 0.6)
+                : UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.6)
+
+            // Ring is first child, dot is second child
+            if let ring = beacon.childNodes.first?.geometry?.firstMaterial {
+                ring.diffuse.contents = color
+                ring.emission.contents = emissionColor
+            }
+            if beacon.childNodes.count > 1,
+               let dot = beacon.childNodes[1].geometry?.firstMaterial {
+                let dotColor: UIColor = tooFar
+                    ? UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 1.0)
+                    : UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 1.0)
+                let dotEmission: UIColor = tooFar
+                    ? UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 0.8)
+                    : UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.8)
+                dot.diffuse.contents = dotColor
+                dot.emission.contents = dotEmission
+            }
         }
     }
 }

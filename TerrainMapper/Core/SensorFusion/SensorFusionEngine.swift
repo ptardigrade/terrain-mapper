@@ -67,6 +67,16 @@ final class SensorFusionEngine: ObservableObject {
     @Published private(set) var stationaryProgress: Double = 0.0
     @Published private(set) var lidarCaptureProgress: Double = 0.0
 
+    /// Live center-pixel depth from LiDAR — forwarded from LiDARManager.
+    @Published private(set) var pointerDistance: Float = 0.0
+
+    /// True when the AR pointer is beyond the maximum capture distance.
+    /// Returns false when there's no depth reading (distance ≤ 0.1) to avoid
+    /// false "too far" states when depth data is temporarily unavailable.
+    var isPointerTooFar: Bool {
+        pointerDistance > LiDARManager.maxCaptureDistance && pointerDistance > 0.1
+    }
+
     /// Square root of Kalman covariance P[0,0] — estimated altitude uncertainty (±metres).
     /// Starts high (~10 m) and decreases as GPS/baro measurements arrive.
     @Published private(set) var altitudeUncertainty: Double = 10.0
@@ -455,5 +465,10 @@ final class SensorFusionEngine: ObservableObject {
         lidarManager.$captureProgress
             .receive(on: RunLoop.main)
             .assign(to: &$lidarCaptureProgress)
+
+        // ── LiDAR center depth → pointer distance ───────────────────────
+        lidarManager.$centerDepthDistance
+            .receive(on: RunLoop.main)
+            .assign(to: &$pointerDistance)
     }
 }

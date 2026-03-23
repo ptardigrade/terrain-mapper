@@ -397,6 +397,14 @@ struct SurveyView: View {
                             .tint(.white)
                             .frame(maxWidth: 200)
                     }
+                } else if engine.isPointerTooFar {
+                    Image(systemName: "xmark.circle.fill").font(.title3)
+                    VStack(spacing: 2) {
+                        Text("Too Far").font(.system(size: 17, weight: .bold))
+                        Text(String(format: "%.1f m — move closer (max 1.5 m)", engine.pointerDistance))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
                 } else if !engine.imuIsStationary {
                     Image(systemName: "exclamationmark.triangle.fill")
                     Text("Hold Steady").font(.system(size: 17, weight: .bold))
@@ -418,10 +426,11 @@ struct SurveyView: View {
             .frame(maxWidth: .infinity)
             .background(captureButtonBackground)
         }
-        // GPS no longer blocks — only disable during active capture or if engine stopped
-        .disabled(sessionStarted && (isCapturing || !engine.isSessionActive))
+        // GPS no longer blocks — disable during active capture, engine stopped, or pointer too far
+        .disabled(sessionStarted && (isCapturing || !engine.isSessionActive || engine.isPointerTooFar))
         .animation(.easeInOut(duration: 0.2), value: isCapturing)
         .animation(.easeInOut(duration: 0.2), value: engine.imuIsStationary)
+        .animation(.easeInOut(duration: 0.2), value: engine.isPointerTooFar)
         .animation(.easeInOut(duration: 0.3), value: gpsIsWeak)
     }
 
@@ -431,6 +440,8 @@ struct SurveyView: View {
             RoundedRectangle(cornerRadius: 14).fill(Theme.primaryGradient)
         } else if isCapturing {
             RoundedRectangle(cornerRadius: 14).fill(Theme.primary.opacity(0.75))
+        } else if engine.isPointerTooFar {
+            RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.85))
         } else if !engine.imuIsStationary {
             RoundedRectangle(cornerRadius: 14).fill(Color.orange)
         } else {
