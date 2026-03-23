@@ -38,16 +38,16 @@ final class ProcessingPipeline: ObservableObject {
 
     @Published private(set) var isProcessing: Bool = false
     @Published fileprivate(set) var progressMessage: String = ""
-    @Published private(set) var progress: Double = 0.0
+    @Published fileprivate(set) var progress: Double = 0.0
 
     // MARK: - Partial results (published progressively as pipeline stages complete)
 
-    @Published private(set) var partialSession: SurveySession?
-    @Published private(set) var partialPoints: [SurveyPoint]?
-    @Published private(set) var partialOutliers: [SurveyPoint]?
-    @Published private(set) var partialMesh: TerrainMesh?
-    @Published private(set) var partialContours: [ContourLine]?
-    @Published private(set) var partialStats: ProcessingStats?
+    @Published fileprivate(set) var partialSession: SurveySession?
+    @Published fileprivate(set) var partialPoints: [SurveyPoint]?
+    @Published fileprivate(set) var partialOutliers: [SurveyPoint]?
+    @Published fileprivate(set) var partialMesh: TerrainMesh?
+    @Published fileprivate(set) var partialContours: [ContourLine]?
+    @Published fileprivate(set) var partialStats: ProcessingStats?
 
     // MARK: - Sub-processors
 
