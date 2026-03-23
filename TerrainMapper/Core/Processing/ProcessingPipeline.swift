@@ -251,22 +251,23 @@ final class ProcessingPipeline: ObservableObject {
         updateProgress("Interpolating terrain grid…")
         var interp = TerrainInterpolator()
         interp.gridResolutionMeters = gridResolution
-        let grid = interp.interpolate(
+        var grid = interp.interpolate(
             points:     validPoints,
             pathPoints: pathPoints,
             method:     interpolationMethod
         )
+        // Laplacian smoothing removes noise spikes from AR mesh data while
+        // preserving the overall terrain shape measured by survey points.
+        grid.smooth(iterations: 2)
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
-        // Generate from captured survey points only (not AR mesh points) via
-        // Bowyer-Watson Delaunay — fast with ~64 points and produces a clean
-        // triangulation that matches the actual measured surface.
+        // Generate from the smoothed interpolation grid.  This produces a
+        // mid-detail mesh — more geometry than survey-point-only Delaunay,
+        // but smooth (not spiky like raw AR mesh).
         updateProgress("Building 3D mesh…")
         let meshGen = MeshGenerator()
-        let mesh = surveyOnlyPoints.count >= 3
-            ? meshGen.generateMesh(from: surveyOnlyPoints)
-            : meshGen.generateMesh(from: grid)
+        let mesh = meshGen.generateMesh(from: grid)
         sendResult.sendMesh(mesh)
         sendResult.sendProgress(0.75)
 
@@ -455,7 +456,7 @@ final class ProcessingPipeline: ObservableObject {
                 verticalAccuracy:    0.05,
                 isOutlier:           false,
                 captureType:         .lidar,
-                interpolationWeight: 0.3
+                interpolationWeight: 0.15
             ))
         }
 
@@ -635,14 +636,22 @@ final class ProcessingPipeline: ObservableObject {
 // MARK: - ProgressSender
 
 /// Bridges background-thread stage names to the @MainActor-isolated progressMessage.
-/// Marked @unchecked Sendable because all mutation is safely routed through MainActor.
+/// Uses DispatchQueue.main.async (not Task @MainActor) so updates are delivered
+/// to the run loop immediately, keeping the progress bar and UI responsive.
 private final class ProgressSender: @unchecked Sendable {
     private weak var pipeline: ProcessingPipeline?
+    private var lastSendTime: CFAbsoluteTime = 0
     init(_ pipeline: ProcessingPipeline) { self.pipeline = pipeline }
 
     func send(_ message: String) {
-        Task { @MainActor [weak self] in
-            self?.pipeline?.progressMessage = message
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastSendTime > 0.1 else { return }   // 100 ms throttle
+        lastSendTime = now
+        DispatchQueue.main.async { [weak self] in
+            guard let pipeline = self?.pipeline else { return }
+            MainActor.assumeIsolated {
+                pipeline.progressMessage = message
+            }
         }
     }
 }
@@ -650,38 +659,54 @@ private final class ProgressSender: @unchecked Sendable {
 // MARK: - ResultSender
 
 /// Bridges partial pipeline results to @MainActor-isolated published properties.
+/// Uses DispatchQueue.main.async for reliable run-loop integration.
 final class ResultSender: @unchecked Sendable {
     private weak var pipeline: ProcessingPipeline?
     init(_ pipeline: ProcessingPipeline) { self.pipeline = pipeline }
 
     func sendProgress(_ value: Double) {
-        Task { @MainActor [weak self] in
-            self?.pipeline?.progress = value
+        DispatchQueue.main.async { [weak self] in
+            guard let pipeline = self?.pipeline else { return }
+            MainActor.assumeIsolated {
+                pipeline.progress = value
+            }
         }
     }
 
     func sendPoints(_ valid: [SurveyPoint], outliers: [SurveyPoint]) {
-        Task { @MainActor [weak self] in
-            self?.pipeline?.partialPoints = valid
-            self?.pipeline?.partialOutliers = outliers
+        DispatchQueue.main.async { [weak self] in
+            guard let pipeline = self?.pipeline else { return }
+            MainActor.assumeIsolated {
+                pipeline.partialPoints = valid
+                pipeline.partialOutliers = outliers
+            }
         }
     }
 
     func sendMesh(_ mesh: TerrainMesh) {
-        Task { @MainActor [weak self] in
-            self?.pipeline?.partialMesh = mesh
+        DispatchQueue.main.async { [weak self] in
+            guard let pipeline = self?.pipeline else { return }
+            MainActor.assumeIsolated {
+                pipeline.partialMesh = mesh
+            }
         }
     }
 
     func sendContours(_ contours: [ContourLine]) {
-        Task { @MainActor [weak self] in
-            self?.pipeline?.partialContours = contours
+        DispatchQueue.main.async { [weak self] in
+            guard let pipeline = self?.pipeline else { return }
+            MainActor.assumeIsolated {
+                pipeline.partialContours = contours
+            }
         }
     }
 
     func sendStats(_ stats: ProcessingStats) {
-        Task { @MainActor [weak self] in
-            self?.pipeline?.partialStats = stats
+        DispatchQueue.main.async { [weak self] in
+            guard let pipeline = self?.pipeline else { return }
+            MainActor.assumeIsolated {
+                pipeline.partialStats = stats
+            }
         }
     }
 }

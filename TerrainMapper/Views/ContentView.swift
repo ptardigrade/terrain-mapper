@@ -98,13 +98,16 @@ struct ContentView: View {
         // Switch to the Results tab so the user sees processing progress.
         selectedTab = 1
 
-        // Convert AR mesh vertices (simd_float3) to plain Float arrays
-        // for Sendable-safe transfer to the background processing task.
-        let meshVerts: [[Float]] = engine.lastSessionMeshVertices.map { v in
-            [v.x, v.y, v.z]
-        }
+        // Capture raw vertices reference on main thread (fast — just a
+        // reference copy).  The heavy .map conversion runs off-main below.
+        let rawVerts = engine.lastSessionMeshVertices
 
         Task {
+            // Convert AR mesh vertices off main thread so UI stays responsive.
+            let meshVerts: [[Float]] = await Task.detached {
+                rawVerts.map { v in [v.x, v.y, v.z] }
+            }.value
+
             let terrain = await pipeline.process(session: session, arMeshVertices: meshVerts)
             processedTerrain = terrain
             isProcessing = false

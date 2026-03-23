@@ -217,9 +217,9 @@ struct ARSurveyView: UIViewRepresentable {
 
         // MARK: - Surveyed-area overlay (white mesh + white thick contours)
 
-        /// Periodically extracts mesh triangles.  When < 3 captured points,
-        /// ALL ground-facing triangles are rendered as the orange outside mesh.
-        /// With 3+ points, triangles are split inside/outside the convex hull.
+        /// Periodically extracts mesh triangles.  Orange mesh always covers
+        /// the full LiDAR-scanned area.  With 3+ captured points, a white
+        /// wireframe is overlaid inside the convex hull along with contour lines.
         private func updateSurveyedAreaOverlay(renderer: SCNSceneRenderer, time: TimeInterval) {
             guard !isComputingOverlay,
                   time - lastOverlayTime > 2.0 else { return }
@@ -236,21 +236,19 @@ struct ARSurveyView: UIViewRepresentable {
             isComputingOverlay = true
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let meshGeo: SCNGeometry?
-                let outsideMeshGeo: SCNGeometry?
-                let contourGeo: SCNGeometry?
+                // Always render ALL ground-facing triangles as orange.
+                let orangeGeo = Self.computeAllMeshGeometry(from: meshAnchors)
 
+                // When 3+ points, also compute white wireframe + contours
+                // for triangles inside the expanded convex hull.
+                var whiteGeo: SCNGeometry?
+                var contourGeo: SCNGeometry?
                 if hasHull {
                     let hull = Self.convexHull2D(hullPts)
                     let expanded = Self.expandedHull(hull, by: 0.3)
-                    (meshGeo, outsideMeshGeo, contourGeo) = Self.computeSurveyedAreaGeometry(
+                    (whiteGeo, contourGeo) = Self.computeInsideHullGeometry(
                         from: meshAnchors, hull: expanded
                     )
-                } else {
-                    // No hull yet — show all ground-facing triangles as orange
-                    meshGeo = nil
-                    contourGeo = nil
-                    outsideMeshGeo = Self.computeAllMeshGeometry(from: meshAnchors)
                 }
 
                 DispatchQueue.main.async { [weak self] in
@@ -260,25 +258,25 @@ struct ARSurveyView: UIViewRepresentable {
                     }
                     self.isComputingOverlay = false
 
-                    // Replace surveyed-area mesh (white, inside hull)
-                    self.surveyedMeshNode?.removeFromParentNode()
-                    if let geo = meshGeo {
-                        let node = SCNNode(geometry: geo)
-                        node.renderingOrder = 0
-                        scene.rootNode.addChildNode(node)
-                        self.surveyedMeshNode = node
-                    }
-
-                    // Replace outside mesh (green, outside hull)
+                    // Orange mesh — full LiDAR scan area (behind everything)
                     self.outsideMeshNode?.removeFromParentNode()
-                    if let geo = outsideMeshGeo {
+                    if let geo = orangeGeo {
                         let node = SCNNode(geometry: geo)
                         node.renderingOrder = -1
                         scene.rootNode.addChildNode(node)
                         self.outsideMeshNode = node
                     }
 
-                    // Replace contour lines
+                    // White wireframe — inside survey boundary (on top of orange)
+                    self.surveyedMeshNode?.removeFromParentNode()
+                    if let geo = whiteGeo {
+                        let node = SCNNode(geometry: geo)
+                        node.renderingOrder = 0
+                        scene.rootNode.addChildNode(node)
+                        self.surveyedMeshNode = node
+                    }
+
+                    // Contour lines (topmost)
                     self.contourLinesNode?.removeFromParentNode()
                     if let geo = contourGeo {
                         let node = SCNNode(geometry: geo)
@@ -292,21 +290,22 @@ struct ARSurveyView: UIViewRepresentable {
 
         // MARK: - Surveyed-area geometry computation (background queue)
 
-        private static func computeSurveyedAreaGeometry(
+        /// Computes white wireframe mesh + contour lines for triangles
+        /// inside the expanded convex hull.  The orange "full scan" mesh
+        /// is computed separately by `computeAllMeshGeometry`.
+        private static func computeInsideHullGeometry(
             from anchors: [ARMeshAnchor],
             hull: [simd_float2]
-        ) -> (mesh: SCNGeometry?, outsideMesh: SCNGeometry?, contours: SCNGeometry?) {
+        ) -> (mesh: SCNGeometry?, contours: SCNGeometry?) {
 
             struct WorldTri {
                 let a: simd_float3, b: simd_float3, c: simd_float3
             }
 
-            // ── Extract ground-facing triangles, split inside/outside hull ─
-            var triangles: [WorldTri] = []           // inside hull (for contours)
-            var insideVerts: [simd_float3] = []      // white wireframe
+            // ── Extract ground-facing triangles inside the hull ──────────
+            var triangles: [WorldTri] = []
+            var insideVerts: [simd_float3] = []
             var insideIndices: [UInt32] = []
-            var outsideVerts: [simd_float3] = []     // green wireframe
-            var outsideIndices: [UInt32] = []
             var yMin: Float = .greatestFiniteMagnitude
             var yMax: Float = -.greatestFiniteMagnitude
 
@@ -355,30 +354,20 @@ struct ARSurveyView: UIViewRepresentable {
                     // Centroid inside hull check (XZ plane)
                     let cx = (va.x + vb.x + vc.x) / 3.0
                     let cz = (va.z + vb.z + vc.z) / 3.0
-                    let isInside = pointInConvexHull(simd_float2(cx, cz), hull: hull)
+                    guard pointInConvexHull(simd_float2(cx, cz), hull: hull) else { continue }
 
-                    if isInside {
-                        triangles.append(WorldTri(a: va, b: vb, c: vc))
+                    triangles.append(WorldTri(a: va, b: vb, c: vc))
 
-                        let base = UInt32(insideVerts.count)
-                        insideVerts.append(va)
-                        insideVerts.append(vb)
-                        insideVerts.append(vc)
-                        insideIndices.append(base)
-                        insideIndices.append(base + 1)
-                        insideIndices.append(base + 2)
+                    let base = UInt32(insideVerts.count)
+                    insideVerts.append(va)
+                    insideVerts.append(vb)
+                    insideVerts.append(vc)
+                    insideIndices.append(base)
+                    insideIndices.append(base + 1)
+                    insideIndices.append(base + 2)
 
-                        yMin = Swift.min(yMin, va.y, vb.y, vc.y)
-                        yMax = Swift.max(yMax, va.y, vb.y, vc.y)
-                    } else {
-                        let base = UInt32(outsideVerts.count)
-                        outsideVerts.append(va)
-                        outsideVerts.append(vb)
-                        outsideVerts.append(vc)
-                        outsideIndices.append(base)
-                        outsideIndices.append(base + 1)
-                        outsideIndices.append(base + 2)
-                    }
+                    yMin = Swift.min(yMin, va.y, vb.y, vc.y)
+                    yMax = Swift.max(yMax, va.y, vb.y, vc.y)
                 }
             }
 
@@ -415,42 +404,6 @@ struct ARSurveyView: UIViewRepresentable {
                 mat.writesToDepthBuffer = false
                 geo.materials = [mat]
                 meshGeometry = geo
-            }
-
-            // ── Build orange mesh with slight infill (outside hull) ─────
-            var outsideGeometry: SCNGeometry?
-            if !outsideVerts.isEmpty {
-                let vertexData = Data(bytes: outsideVerts, count: outsideVerts.count * MemoryLayout<simd_float3>.size)
-                let vertexSource = SCNGeometrySource(
-                    data: vertexData,
-                    semantic: .vertex,
-                    vectorCount: outsideVerts.count,
-                    usesFloatComponents: true,
-                    componentsPerVector: 3,
-                    bytesPerComponent: MemoryLayout<Float>.size,
-                    dataOffset: 0,
-                    dataStride: MemoryLayout<simd_float3>.size
-                )
-                let indexData = Data(bytes: outsideIndices, count: outsideIndices.count * MemoryLayout<UInt32>.size)
-                let element = SCNGeometryElement(
-                    data: indexData,
-                    primitiveType: .triangles,
-                    primitiveCount: outsideIndices.count / 3,
-                    bytesPerIndex: MemoryLayout<UInt32>.size
-                )
-                let geo = SCNGeometry(sources: [vertexSource], elements: [element])
-                // Filled mesh (not wireframe) with semi-transparent orange
-                let mat = SCNMaterial()
-                mat.diffuse.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.18)
-                mat.emission.contents = UIColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.5)
-                mat.emission.intensity = 0.7
-                mat.lightingModel = .constant
-                mat.isDoubleSided = true
-                mat.readsFromDepthBuffer = true
-                mat.writesToDepthBuffer = false
-                mat.transparencyMode = .dualLayer
-                geo.materials = [mat]
-                outsideGeometry = geo
             }
 
             // ── Build smooth contour ribbon geometry ─────────────────────
@@ -500,7 +453,7 @@ struct ARSurveyView: UIViewRepresentable {
                 }
             }
 
-            return (meshGeometry, outsideGeometry, contourGeometry)
+            return (meshGeometry, contourGeometry)
         }
 
         /// Renders ALL ground-facing AR mesh triangles as orange infill.
@@ -571,7 +524,7 @@ struct ARSurveyView: UIViewRepresentable {
             )
             let geometry = SCNGeometry(sources: [vertexSource], elements: [element])
             let mat = SCNMaterial()
-            mat.diffuse.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.18)
+            mat.diffuse.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.25)
             mat.emission.contents = UIColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.5)
             mat.emission.intensity = 0.7
             mat.lightingModel = .constant

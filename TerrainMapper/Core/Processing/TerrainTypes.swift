@@ -52,6 +52,37 @@ struct TerrainGrid {
     var validElevations: [Double] {
         elevations.flatMap { $0 }.compactMap { $0 }
     }
+
+    /// Laplacian smoothing: replaces each cell's elevation with a weighted
+    /// average of itself (0.5) and its non-nil 8-neighbours (0.5).
+    /// Nil cells remain nil.  Uses a temporary copy per iteration to avoid
+    /// read-during-write artifacts.
+    mutating func smooth(iterations: Int) {
+        for _ in 0..<iterations {
+            var next = elevations
+            for row in 0..<height {
+                for col in 0..<width {
+                    guard let center = elevations[row][col] else { continue }
+                    var sum = 0.0
+                    var count = 0
+                    for dr in -1...1 {
+                        for dc in -1...1 {
+                            if dr == 0 && dc == 0 { continue }
+                            let nr = row + dr, nc = col + dc
+                            guard nr >= 0, nr < height, nc >= 0, nc < width,
+                                  let val = elevations[nr][nc] else { continue }
+                            sum += val
+                            count += 1
+                        }
+                    }
+                    if count >= 3 {
+                        next[row][col] = 0.5 * center + 0.5 * (sum / Double(count))
+                    }
+                }
+            }
+            elevations = next
+        }
+    }
 }
 
 // MARK: - TerrainMesh

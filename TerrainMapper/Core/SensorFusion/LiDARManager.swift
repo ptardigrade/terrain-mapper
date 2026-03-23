@@ -163,15 +163,18 @@ final class LiDARManager: NSObject, ObservableObject {
     /// Extracts all mesh vertices from the current AR session in world space.
     /// Called before pausing the session so mesh data can feed the elevation model.
     /// Only includes ground-facing triangles (normal.y > 0.5) and downsamples
-    /// to approximately one vertex per 5 cm grid cell.
+    /// to approximately one vertex per 20 cm grid cell, using the average Y
+    /// per cell to cancel out sensor noise.
     func extractMeshWorldVertices() -> [simd_float3] {
         guard let session = arSession, let frame = session.currentFrame else { return [] }
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
         guard !meshAnchors.isEmpty else { return [] }
 
-        // Spatial hash grid for downsampling (5 cm cells)
-        let cellSize: Float = 0.05
-        var gridBuckets: [SIMD2<Int32>: Float] = [:]   // (gridX, gridZ) → best Y
+        // Spatial hash grid for downsampling (20 cm cells — larger cells
+        // reduce noise by averaging many vertices per cell)
+        let cellSize: Float = 0.20
+        var gridSumY: [SIMD2<Int32>: Float] = [:]
+        var gridCountY: [SIMD2<Int32>: Int] = [:]
 
         for anchor in meshAnchors {
             let geo = anchor.geometry
@@ -218,24 +221,24 @@ final class LiDARManager: NSObject, ObservableObject {
                 groundVertexIndices.insert(c)
             }
 
-            // Downsample: one vertex per grid cell, keep median-ish Y
+            // Downsample: average Y per grid cell (cancels sensor noise)
             for idx in groundVertexIndices {
                 let v = worldVerts[idx]
                 let gx = Int32(floor(v.x / cellSize))
                 let gz = Int32(floor(v.z / cellSize))
                 let key = SIMD2<Int32>(gx, gz)
-                // Keep lowest Y (closest to ground) per cell
-                if let existing = gridBuckets[key] {
-                    gridBuckets[key] = min(existing, v.y)
-                } else {
-                    gridBuckets[key] = v.y
-                }
+                gridSumY[key, default: 0] += v.y
+                gridCountY[key, default: 0] += 1
             }
         }
 
-        // Convert grid back to world positions
-        return gridBuckets.map { (key, y) in
-            simd_float3(Float(key.x) * cellSize + cellSize * 0.5, y, Float(key.y) * cellSize + cellSize * 0.5)
+        // Convert grid back to world positions (average Y per cell)
+        return gridSumY.compactMap { (key, sumY) -> simd_float3? in
+            guard let count = gridCountY[key], count > 0 else { return nil }
+            let avgY = sumY / Float(count)
+            return simd_float3(Float(key.x) * cellSize + cellSize * 0.5,
+                               avgY,
+                               Float(key.y) * cellSize + cellSize * 0.5)
         }
     }
 
