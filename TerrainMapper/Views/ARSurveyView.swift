@@ -406,7 +406,7 @@ struct ARSurveyView: UIViewRepresentable {
                 meshGeometry = geo
             }
 
-            // ── Build green wireframe mesh (outside hull) ────────────────
+            // ── Build orange mesh with slight infill (outside hull) ─────
             var outsideGeometry: SCNGeometry?
             if !outsideVerts.isEmpty {
                 let vertexData = Data(bytes: outsideVerts, count: outsideVerts.count * MemoryLayout<simd_float3>.size)
@@ -428,15 +428,16 @@ struct ARSurveyView: UIViewRepresentable {
                     bytesPerIndex: MemoryLayout<UInt32>.size
                 )
                 let geo = SCNGeometry(sources: [vertexSource], elements: [element])
+                // Filled mesh (not wireframe) with semi-transparent orange
                 let mat = SCNMaterial()
-                mat.fillMode = .lines
-                mat.diffuse.contents = UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.3)
-                mat.emission.contents = UIColor(red: 0.23, green: 0.87, blue: 0.67, alpha: 0.4)
-                mat.emission.intensity = 0.6
+                mat.diffuse.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.18)
+                mat.emission.contents = UIColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.5)
+                mat.emission.intensity = 0.7
                 mat.lightingModel = .constant
                 mat.isDoubleSided = true
                 mat.readsFromDepthBuffer = true
                 mat.writesToDepthBuffer = false
+                mat.transparencyMode = .dualLayer
                 geo.materials = [mat]
                 outsideGeometry = geo
             }

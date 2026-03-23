@@ -258,11 +258,11 @@ final class ProcessingPipeline: ObservableObject {
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
+        // Always generate from the interpolated grid — it produces a smooth,
+        // regular surface and avoids O(n²) Bowyer-Watson on 100K+ AR mesh points.
         updateProgress("Building 3D mesh…")
         let meshGen = MeshGenerator()
-        let mesh = validPoints.count >= 3
-            ? meshGen.generateMesh(from: validPoints)
-            : meshGen.generateMesh(from: grid)
+        let mesh = meshGen.generateMesh(from: grid)
         sendResult.sendMesh(mesh)
         sendResult.sendProgress(0.75)
 
@@ -337,8 +337,11 @@ final class ProcessingPipeline: ObservableObject {
         arkCentZ /= Double(arkPoints.count)
 
         // GPS centroid (geographic anchor for absolute position).
-        let gpsCentLat = points.map(\.latitude).reduce(0, +) / Double(points.count)
-        let gpsCentLon = points.map(\.longitude).reduce(0, +) / Double(points.count)
+        // Exclude points with no real GPS fix (horizontalAccuracy >= 9999).
+        let gpsPoints = points.filter { $0.horizontalAccuracy < 9999 }
+        let centroidSource = gpsPoints.isEmpty ? points : gpsPoints
+        let gpsCentLat = centroidSource.map(\.latitude).reduce(0, +) / Double(centroidSource.count)
+        let gpsCentLon = centroidSource.map(\.longitude).reduce(0, +) / Double(centroidSource.count)
 
         let θ = anchorHeadingDeg * .pi / 180.0
         let cosθ = cos(θ), sinθ = sin(θ)
@@ -408,9 +411,11 @@ final class ProcessingPipeline: ObservableObject {
         // Y offset: correctedElevation ≈ arkitY + yOffset
         let yOffset = elevSum - arkCentY
 
-        // GPS centroid (geographic anchor)
-        let gpsCentLat = capturedPoints.map(\.latitude).reduce(0, +) / Double(capturedPoints.count)
-        let gpsCentLon = capturedPoints.map(\.longitude).reduce(0, +) / Double(capturedPoints.count)
+        // GPS centroid (geographic anchor — exclude no-GPS placeholders)
+        let realGPS = capturedPoints.filter { $0.horizontalAccuracy < 9999 }
+        let centSrc = realGPS.isEmpty ? capturedPoints : realGPS
+        let gpsCentLat = centSrc.map(\.latitude).reduce(0, +) / Double(centSrc.count)
+        let gpsCentLon = centSrc.map(\.longitude).reduce(0, +) / Double(centSrc.count)
 
         let θ = anchorHeadingDeg * .pi / 180.0
         let cosθ = cos(θ), sinθ = sin(θ)

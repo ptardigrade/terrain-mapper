@@ -401,7 +401,7 @@ struct SurveyView: View {
                     Image(systemName: "xmark.circle.fill").font(.title3)
                     VStack(spacing: 2) {
                         Text("Too Far").font(.system(size: 17, weight: .bold))
-                        Text(String(format: "%.1f m — move closer (max 1.5 m)", engine.pointerDistance))
+                        Text(String(format: "%.1f m — move closer (max 2.5 m)", engine.pointerDistance))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.white.opacity(0.8))
                     }
@@ -413,8 +413,12 @@ struct SurveyView: View {
                     VStack(spacing: 2) {
                         Text("Capture Point").font(.system(size: 17, weight: .bold))
                         // Show GPS warning inline but don't block capture
-                        if gpsIsWeak {
-                            Text("⚠ Weak GPS — ARKit VIO active")
+                        if engine.hasNoGPS {
+                            Text("No GPS — using ARKit positioning")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.orange.opacity(0.9))
+                        } else if gpsIsWeak {
+                            Text("Weak GPS — ARKit VIO active")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.yellow.opacity(0.9))
                         }

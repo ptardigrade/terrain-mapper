@@ -45,7 +45,7 @@ enum SensorFusionError: LocalizedError {
         case .lidarCaptureFailed(let error):
             return "LiDAR reading failed: \(error.localizedDescription). Try again."
         case .pointerTooFar(let distance):
-            return String(format: "Target is %.1f m away — move closer. Maximum range is 1.5 m for accurate readings.", distance)
+            return String(format: "Target is %.1f m away — move closer. Maximum range is 2.5 m for accurate readings.", distance)
         }
     }
 }
@@ -64,6 +64,9 @@ final class SensorFusionEngine: ObservableObject {
     @Published private(set) var tiltAngleDegrees: Double = 0.0
     @Published private(set) var currentAltitude: Double = 0.0
     @Published private(set) var gpsAccuracy: Double = 0.0
+
+    /// True when GPS has no fix at all — used for a soft UI warning.
+    var hasNoGPS: Bool { gpsManager.currentLocation == nil }
     @Published private(set) var stationaryProgress: Double = 0.0
     @Published private(set) var lidarCaptureProgress: Double = 0.0
 
@@ -302,13 +305,34 @@ final class SensorFusionEngine: ObservableObject {
             throw SensorFusionError.pointerTooFar(distance: lidarDistance)
         }
 
-        // ── Step 4: Get current GPS location ─────────────────────────────
-        guard let location = gpsManager.currentLocation else {
-            throw SensorFusionError.locationUnavailable
+        // ── Step 4: Get current GPS location (soft fallback if unavailable) ─
+        let location: CLLocation
+        if let gpsLoc = gpsManager.currentLocation {
+            location = gpsLoc
+        } else if let lastPt = session?.points.last {
+            // No GPS fix — reuse last captured point's position with degraded accuracy.
+            location = CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: lastPt.latitude, longitude: lastPt.longitude),
+                altitude: lastPt.gpsAltitude,
+                horizontalAccuracy: 9999,
+                verticalAccuracy: -1,
+                timestamp: Date()
+            )
+        } else {
+            // Very first point with no GPS — use a placeholder.
+            // ARKit VIO will refine the relative positions in post-processing.
+            location = CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+                altitude: 0,
+                horizontalAccuracy: 9999,
+                verticalAccuracy: -1,
+                timestamp: Date()
+            )
         }
 
         // ── Step 5: Update Kalman with GPS if fix is fresh (<5 s) ─────────
-        if -location.timestamp.timeIntervalSinceNow < 5.0,
+        if gpsManager.currentLocation != nil,
+           -location.timestamp.timeIntervalSinceNow < 5.0,
            location.verticalAccuracy > 0 {
             kalman.updateGPS(altitude: location.altitude)
         }

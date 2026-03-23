@@ -108,7 +108,7 @@ final class LiDARManager: NSObject, ObservableObject {
 
     /// Maximum distance (metres) from device for a valid point capture.
     /// Points beyond this distance are rejected to avoid sampling bad data.
-    static let maxCaptureDistance: Float = 1.5
+    static let maxCaptureDistance: Float = 2.5
 
     /// The world-space position where the camera's optical axis hits the scene,
     /// i.e. where the user's AR pointer/beacon is aimed.  Uses the center-pixel

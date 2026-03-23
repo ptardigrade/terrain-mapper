@@ -313,13 +313,25 @@ struct ProgressiveResultsView: View {
 
 /// Lightweight map view used during progressive loading — shows points and
 /// optionally contour polylines without requiring the full ProcessedTerrain.
+/// Downsamples to at most 200 annotations to avoid MapKit crash on large datasets.
 private struct PartialMapView: View {
     let points: [SurveyPoint]
     let contours: [ContourLine]
 
+    /// Downsample large point arrays to prevent MapKit from freezing.
+    private var displayPoints: [SurveyPoint] {
+        let maxAnnotations = 200
+        guard points.count > maxAnnotations else { return points }
+        let stride = max(1, points.count / maxAnnotations)
+        return (0..<points.count).compactMap { i in
+            i % stride == 0 ? points[i] : nil
+        }
+    }
+
     var body: some View {
-        let allLats = points.map(\.latitude)
-        let allLons = points.map(\.longitude)
+        let pts = displayPoints
+        let allLats = pts.map(\.latitude)
+        let allLons = pts.map(\.longitude)
         let centLat = allLats.isEmpty ? 0 : allLats.reduce(0,+) / Double(allLats.count)
         let centLon = allLons.isEmpty ? 0 : allLons.reduce(0,+) / Double(allLons.count)
         let region = MKCoordinateRegion(
@@ -328,7 +340,7 @@ private struct PartialMapView: View {
         )
 
         Map(initialPosition: .region(region)) {
-            ForEach(points) { p in
+            ForEach(pts) { p in
                 Annotation("", coordinate: CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude)) {
                     Circle()
                         .fill(Color.green.opacity(0.8))
