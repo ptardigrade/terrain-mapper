@@ -258,7 +258,7 @@ final class ProcessingPipeline: ObservableObject {
         )
         // Laplacian smoothing removes noise spikes from AR mesh data while
         // preserving the overall terrain shape measured by survey points.
-        grid.smooth(iterations: 4)
+        grid.smooth(iterations: 3)
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────

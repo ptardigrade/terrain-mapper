@@ -215,7 +215,7 @@ final class LiDARManager: NSObject, ObservableObject {
                 let len = simd_length(cross)
                 guard len > 1e-8 else { continue }
                 let normal = cross / len
-                guard normal.y > 0.7 else { continue }
+                guard normal.y > 0.5 else { continue }
                 groundVertexIndices.insert(a)
                 groundVertexIndices.insert(b)
                 groundVertexIndices.insert(c)

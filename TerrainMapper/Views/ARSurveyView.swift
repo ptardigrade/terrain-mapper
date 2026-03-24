@@ -525,8 +525,8 @@ struct ARSurveyView: UIViewRepresentable {
             let geometry = SCNGeometry(sources: [vertexSource], elements: [element])
             let mat = SCNMaterial()
             mat.diffuse.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.25)
-            mat.emission.contents = UIColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.5)
-            mat.emission.intensity = 0.7
+            mat.emission.contents = UIColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 1.0)
+            mat.emission.intensity = 1.0
             mat.lightingModel = .constant
             mat.isDoubleSided = true
             mat.readsFromDepthBuffer = true
