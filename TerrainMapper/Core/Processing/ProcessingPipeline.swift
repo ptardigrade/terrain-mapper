@@ -202,6 +202,7 @@ final class ProcessingPipeline: ObservableObject {
         var geo = GeoidCorrector()
         geo.isEnabled = enableGeoidCorrection
         geo.correct(points: &points)
+        geo.correct(points: &pathPoints)
 
         // ── 4b. Elevation offset ──────────────────────────────────────────
         if elevationOffset != 0 {
@@ -258,7 +259,7 @@ final class ProcessingPipeline: ObservableObject {
         )
         // Laplacian smoothing removes noise spikes from AR mesh data while
         // preserving the overall terrain shape measured by survey points.
-        grid.smooth(iterations: 3)
+        grid.smooth(iterations: 1)
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
