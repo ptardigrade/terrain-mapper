@@ -238,6 +238,11 @@ final class SensorFusionEngine: ObservableObject {
             s.arkitAnchorHeading = arkitAnchorHeading
         }
 
+        // Persist AR mesh vertices so history reprocessing produces identical results.
+        if !lastSessionMeshVertices.isEmpty {
+            s.arMeshWorldVertices = lastSessionMeshVertices.map { v in [v.x, v.y, v.z] }
+        }
+
         // Outlier detection and PDR refinement are intentionally deferred to
         // ProcessingPipeline so the user's configured thresholds (madThreshold,
         // gridResolution, etc.) are applied.  Running them here would either be

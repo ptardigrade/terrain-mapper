@@ -98,16 +98,11 @@ struct ContentView: View {
         // Switch to the Results tab so the user sees processing progress.
         selectedTab = 1
 
-        // Capture raw vertices reference on main thread (fast — just a
-        // reference copy).  The heavy .map conversion runs off-main below.
-        let rawVerts = engine.lastSessionMeshVertices
+        // AR mesh vertices are now persisted in the session by endSession(),
+        // so read them from the session for consistency with history reprocessing.
+        let meshVerts = session.arMeshWorldVertices ?? []
 
         Task {
-            // Convert AR mesh vertices off main thread so UI stays responsive.
-            let meshVerts: [[Float]] = await Task.detached {
-                rawVerts.map { v in [v.x, v.y, v.z] }
-            }.value
-
             let terrain = await pipeline.process(session: session, arMeshVertices: meshVerts)
             processedTerrain = terrain
             isProcessing = false

@@ -193,7 +193,7 @@ struct SessionHistoryView: View {
         settings.configure(pipeline)
 
         Task {
-            let terrain = await pipeline.process(session: session)
+            let terrain = await pipeline.process(session: session, arMeshVertices: session.arMeshWorldVertices ?? [])
             selectedTerrain = terrain
             isReprocessing = false
         }

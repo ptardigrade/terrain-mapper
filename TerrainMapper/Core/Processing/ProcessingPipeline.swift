@@ -258,7 +258,7 @@ final class ProcessingPipeline: ObservableObject {
         )
         // Laplacian smoothing removes noise spikes from AR mesh data while
         // preserving the overall terrain shape measured by survey points.
-        grid.smooth(iterations: 2)
+        grid.smooth(iterations: 4)
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────
@@ -458,6 +458,24 @@ final class ProcessingPipeline: ObservableObject {
                 captureType:         .lidar,
                 interpolationWeight: 0.15
             ))
+        }
+
+        // ── Filter outlier mesh vertices (walls, roofs, fences) ─────────
+        // Use capture-point elevations as ground truth.  Any mesh vertex
+        // whose converted elevation falls far outside the capture range is
+        // from a non-ground surface and must be discarded.
+        let captureElevs = capturedPoints
+            .filter { !$0.isOutlier }
+            .map(\.groundElevation)
+            .sorted()
+        if !captureElevs.isEmpty {
+            let median = captureElevs[captureElevs.count / 2]
+            let captureRange = captureElevs.last! - captureElevs.first!
+            let tolerance = max(captureRange * 2.0, 3.0)
+            result = result.filter {
+                $0.groundElevation >= median - tolerance &&
+                $0.groundElevation <= median + tolerance
+            }
         }
 
         return result

@@ -61,6 +61,11 @@ struct SurveySession: Identifiable, Codable {
     /// session started.  Used to rotate ARKit world XZ to geographic East/North.
     var arkitAnchorHeading: Double? = nil
 
+    /// Downsampled AR mesh world-space vertices captured during the session.
+    /// Each element is `[x, y, z]` in ARKit world metres.
+    /// Optional for backward compatibility with sessions saved before this field existed.
+    var arMeshWorldVertices: [[Float]]? = nil
+
     // MARK: - Initialisers
 
     init(stickHeight: Double = 1.1, geoidOffset: Double = 0.0, name: String = "") {
