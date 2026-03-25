@@ -268,6 +268,7 @@ final class ProcessingPipeline: ObservableObject {
         )
         // Laplacian smoothing removes noise spikes from AR mesh data while
         // preserving the overall terrain shape measured by survey points.
+        grid.removeSpikes(threshold: 2.0)
         grid.smooth(iterations: 1)
         sendResult.sendProgress(0.6)
 
@@ -481,7 +482,7 @@ final class ProcessingPipeline: ObservableObject {
         if !captureElevs.isEmpty {
             let median = captureElevs[captureElevs.count / 2]
             let captureRange = captureElevs.last! - captureElevs.first!
-            let tolerance = max(captureRange * 0.75, 2.0)
+            let tolerance = max(captureRange * 0.5, 1.5)
             result = result.filter {
                 $0.groundElevation >= median - tolerance &&
                 $0.groundElevation <= median + tolerance

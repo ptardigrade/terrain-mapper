@@ -83,6 +83,36 @@ struct TerrainGrid {
             elevations = next
         }
     }
+
+    /// Median-filter spike removal: replaces any cell whose elevation
+    /// deviates from its neighbors' median by more than `threshold` metres
+    /// with that median.  Unlike Laplacian smoothing, this surgically
+    /// removes isolated spikes without blurring the overall terrain.
+    mutating func removeSpikes(threshold: Double = 2.0) {
+        var next = elevations
+        for row in 0..<height {
+            for col in 0..<width {
+                guard let center = elevations[row][col] else { continue }
+                var neighborValues: [Double] = []
+                for dr in -1...1 {
+                    for dc in -1...1 {
+                        if dr == 0 && dc == 0 { continue }
+                        let nr = row + dr, nc = col + dc
+                        guard nr >= 0, nr < height, nc >= 0, nc < width,
+                              let val = elevations[nr][nc] else { continue }
+                        neighborValues.append(val)
+                    }
+                }
+                guard neighborValues.count >= 3 else { continue }
+                neighborValues.sort()
+                let neighborMedian = neighborValues[neighborValues.count / 2]
+                if abs(center - neighborMedian) > threshold {
+                    next[row][col] = neighborMedian
+                }
+            }
+        }
+        elevations = next
+    }
 }
 
 // MARK: - TerrainMesh
