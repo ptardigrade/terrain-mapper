@@ -109,6 +109,64 @@ struct LoopClosureProcessor {
         return true
     }
 
+    // MARK: - ARKit horizontal loop closure
+
+    /// Applies linear horizontal drift correction to ARKit world-space positions
+    /// when GPS indicates the user returned to the starting point.
+    ///
+    /// ARKit VIO accumulates horizontal drift over long sessions (typically 1–5 m
+    /// over 20 minutes).  If the operator walks a closed loop, any discrepancy
+    /// between the first and last ARKit XZ positions is pure drift.  We distribute
+    /// this error linearly across all captured points in capture order.
+    ///
+    /// - Parameters:
+    ///   - points: Capture points (used for GPS-based loop detection and ordering).
+    ///   - arkitPositions: Mutable ARKit position dictionary `[UUID: [x, z, ...]]`.
+    /// - Returns: `true` if a closure was detected and ARKit positions corrected.
+    @discardableResult
+    func applyArkitLoopClosure(
+        points: [SurveyPoint],
+        arkitPositions: inout [String: [Double]]
+    ) -> Bool {
+        // Non-outlier points that have ARKit data, in capture order
+        let validWithArkit = points.filter {
+            !$0.isOutlier && arkitPositions[$0.id.uuidString] != nil
+        }
+        guard validWithArkit.count >= 4 else { return false }
+
+        let first = validWithArkit.first!
+        let last  = validWithArkit.last!
+
+        // Check GPS proximity (did the user return to start?)
+        let horizontalDist = haversineMetres(
+            lat1: first.latitude, lon1: first.longitude,
+            lat2: last.latitude,  lon2: last.longitude
+        )
+        guard horizontalDist <= closureRadiusMetres else { return false }
+
+        // Compute ARKit XZ drift between first and last position
+        let firstPos = arkitPositions[first.id.uuidString]!
+        let lastPos  = arkitPositions[last.id.uuidString]!
+        let driftX = lastPos[0] - firstPos[0]
+        let driftZ = lastPos[1] - firstPos[1]
+
+        let driftMag = sqrt(driftX * driftX + driftZ * driftZ)
+        guard driftMag > 0.1 else { return true }  // negligible drift
+
+        // Linearly distribute correction across all points with ARKit data
+        let n = validWithArkit.count
+        for (k, p) in validWithArkit.enumerated() {
+            let fraction = Double(k) / Double(n - 1)
+            let key = p.id.uuidString
+            guard var pos = arkitPositions[key] else { continue }
+            pos[0] -= driftX * fraction
+            pos[1] -= driftZ * fraction
+            arkitPositions[key] = pos
+        }
+
+        return true
+    }
+
     // MARK: - Query helpers
 
     /// Returns the horizontal closure distance in metres (first → last valid point).

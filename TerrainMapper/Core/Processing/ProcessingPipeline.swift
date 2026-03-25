@@ -172,14 +172,23 @@ final class ProcessingPipeline: ObservableObject {
         var lcProc = LoopClosureProcessor()
         let loopClosed = lcProc.applyLoopClosure(to: &points)
 
-        // ── 3a. ARKit VIO position refinement ────────────────────────────
+        // ── 3a. ARKit horizontal loop closure ─────────────────────────────
+        // Correct ARKit XZ drift before using positions for lat/lon refinement.
+        var correctedArkitPositions = arkitPositions
+        if var ark = correctedArkitPositions, !ark.isEmpty {
+            if lcProc.applyArkitLoopClosure(points: points, arkitPositions: &ark) {
+                correctedArkitPositions = ark
+            }
+        }
+
+        // ── 3b. ARKit VIO position refinement ────────────────────────────
         // When ARKit world-space positions were recorded during capture, use them
         // as the primary horizontal positioning source.  GPS accuracy (3–15 m) is
         // far worse than ARKit VIO accuracy (< 5 cm) for sub-meter surveys.
         // The ARKit XZ frame is rotated to geographic East/North using the compass
         // heading recorded at session start, then anchored to the GPS centroid.
         let hasArkitData: Bool
-        if let ark = arkitPositions, let heading = arkitAnchorHeading, !ark.isEmpty {
+        if let ark = correctedArkitPositions, let heading = arkitAnchorHeading, !ark.isEmpty {
             updateProgress("Refining positions with ARKit VIO…")
             ProcessingPipeline.arkitRefinePositions(
                 points: &points,
@@ -191,7 +200,7 @@ final class ProcessingPipeline: ObservableObject {
             hasArkitData = false
         }
 
-        // ── 3b. PDR position refinement (fallback when no ARKit data) ─────
+        // ── 3c. PDR position refinement (fallback when no ARKit data) ─────
         updateProgress("Smoothing survey path…")
         if !hasArkitData {
             ProcessingPipeline.pdrRefineStatic(points: &points)
@@ -233,7 +242,7 @@ final class ProcessingPipeline: ObservableObject {
         let surveyOnlyPoints = points.filter { !$0.isOutlier }
         var validPoints = surveyOnlyPoints
         if !arMeshVertices.isEmpty,
-           let ark = arkitPositions, let heading = arkitAnchorHeading {
+           let ark = correctedArkitPositions, let heading = arkitAnchorHeading {
             updateProgress("Integrating AR mesh data…")
             let meshPts = convertMeshVerticesToPoints(
                 vertices: arMeshVertices,
@@ -472,7 +481,7 @@ final class ProcessingPipeline: ObservableObject {
         if !captureElevs.isEmpty {
             let median = captureElevs[captureElevs.count / 2]
             let captureRange = captureElevs.last! - captureElevs.first!
-            let tolerance = max(captureRange * 2.0, 3.0)
+            let tolerance = max(captureRange * 0.75, 2.0)
             result = result.filter {
                 $0.groundElevation >= median - tolerance &&
                 $0.groundElevation <= median + tolerance
