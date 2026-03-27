@@ -35,6 +35,15 @@ final class ProcessingPipeline: ObservableObject {
     /// isolate whether 3D model spikes originate from capture-point data.
     var excludePointElevation: Bool = false
 
+    /// When true, path-track points are omitted from `TerrainInterpolator` input.
+    var excludePathTrackFromInterpolation: Bool = false
+
+    /// When true, AR mesh vertices are not added as supplementary interpolator points.
+    var excludeARMeshFromInterpolation: Bool = false
+
+    /// Post-interpolation Laplacian smoothing iterations on the grid (clamped 0–5 at configure time).
+    var gridSmoothingIterations: Int = 1
+
     // MARK: - Progress reporting
 
     @Published private(set) var isProcessing: Bool = false
@@ -93,6 +102,9 @@ final class ProcessingPipeline: ObservableObject {
         let capturedGeoidEnabled        = enableGeoidCorrection
         let capturedMadThreshold        = madThreshold
         let capturedExcludePointElev     = excludePointElevation
+        let capturedExcludePathTrack     = excludePathTrackFromInterpolation
+        let capturedExcludeARMesh        = excludeARMeshFromInterpolation
+        let capturedSmoothIterations     = min(5, max(0, gridSmoothingIterations))
         let capturedArkitPositions      = session.arkitPositions
         let capturedArkitHeading        = session.arkitAnchorHeading
         let capturedMeshVertices        = arMeshVertices
@@ -110,6 +122,9 @@ final class ProcessingPipeline: ObservableObject {
                 enableGeoidCorrection: capturedGeoidEnabled,
                 madThreshold:          capturedMadThreshold,
                 excludePointElevation: capturedExcludePointElev,
+                excludePathTrackFromInterpolation: capturedExcludePathTrack,
+                excludeARMeshFromInterpolation: capturedExcludeARMesh,
+                gridSmoothingIterations: capturedSmoothIterations,
                 arkitPositions:        capturedArkitPositions,
                 arkitAnchorHeading:    capturedArkitHeading,
                 arMeshVertices:        capturedMeshVertices,
@@ -135,6 +150,9 @@ final class ProcessingPipeline: ObservableObject {
         enableGeoidCorrection: Bool,
         madThreshold:         Double,
         excludePointElevation: Bool,
+        excludePathTrackFromInterpolation: Bool,
+        excludeARMeshFromInterpolation: Bool,
+        gridSmoothingIterations: Int,
         arkitPositions:       [String: [Double]]?,
         arkitAnchorHeading:   Double?,
         arMeshVertices:       [[Float]],
@@ -217,7 +235,8 @@ final class ProcessingPipeline: ObservableObject {
         // ── 4b. Integrate AR mesh vertices as supplementary points ────────
         let surveyOnlyPoints = points.filter { !$0.isOutlier }
         var validPoints = surveyOnlyPoints
-        if !arMeshVertices.isEmpty,
+        if !excludeARMeshFromInterpolation,
+           !arMeshVertices.isEmpty,
            let ark = correctedArkitPositions, let heading = arkitAnchorHeading {
             updateProgress("Integrating AR mesh data…")
             let meshPts = convertMeshVerticesToPoints(
@@ -280,15 +299,16 @@ final class ProcessingPipeline: ObservableObject {
         updateProgress("Interpolating terrain grid…")
         var interp = TerrainInterpolator()
         interp.gridResolutionMeters = gridResolution
+        let pathForInterpolation = excludePathTrackFromInterpolation ? [] : pathPoints
         var grid = interp.interpolate(
             points:     validPoints,
-            pathPoints: pathPoints,
+            pathPoints: pathForInterpolation,
             method:     interpolationMethod
         )
         // Laplacian smoothing removes noise spikes from AR mesh data while
         // preserving the overall terrain shape measured by survey points.
         grid.removeSpikes(threshold: 2.0)
-        grid.smooth(iterations: 1)
+        grid.smooth(iterations: gridSmoothingIterations)
         sendResult.sendProgress(0.6)
 
         // ── 6. Mesh generation ─────────────────────────────────────────────

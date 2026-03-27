@@ -214,22 +214,93 @@ struct SettingsView: View {
 
     private var diagnosticCard: some View {
         card {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingLabel("Exclude Point Elevation")
-                    Text("Flatten survey point Z to isolate spike sources")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.onSurfaceVariant)
+            VStack(spacing: 20) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        settingLabel("Exclude Point Elevation")
+                        Text("Flatten survey point Z to isolate spike sources")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.onSurfaceVariant)
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Toggle("", isOn: $settings.excludePointElevation)
+                            .tint(Theme.primary)
+                            .labelsHidden()
+                        InfoButton(
+                            title: "Exclude Point Elevation",
+                            message: "Replaces the elevation of manually captured survey points with a flat median value during mesh and contour generation. Path-track and AR mesh elevations are preserved (unless those diagnostics are also on). Use this to test whether spike artifacts originate from survey capture elevations."
+                        )
+                    }
                 }
-                Spacer()
-                HStack(spacing: 6) {
-                    Toggle("", isOn: $settings.excludePointElevation)
-                        .tint(Theme.primary)
-                        .labelsHidden()
-                    InfoButton(
-                        title: "Exclude Point Elevation",
-                        message: "Replaces the elevation of manually captured survey points with a flat median value during mesh and contour generation. Path-track and AR mesh elevations are preserved. Use this to test whether geometric spike artifacts in the 3D model originate from the survey capture points."
+
+                cardDivider
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        settingLabel("Exclude Path Track")
+                        Text("Omit breadcrumbs from terrain interpolation")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.onSurfaceVariant)
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Toggle("", isOn: $settings.excludePathTrackFromInterpolation)
+                            .tint(Theme.primary)
+                            .labelsHidden()
+                        InfoButton(
+                            title: "Exclude Path Track",
+                            message: "Path-track points are not passed into the IDW/kriging step. Captures (and optional AR mesh points) still define the surface. Reprocess a session to compare results—useful to see if spikes follow the walked path."
+                        )
+                    }
+                }
+
+                cardDivider
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        settingLabel("Exclude AR Mesh")
+                        Text("Skip mesh vertices as grid samples")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.onSurfaceVariant)
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Toggle("", isOn: $settings.excludeARMeshFromInterpolation)
+                            .tint(Theme.primary)
+                            .labelsHidden()
+                        InfoButton(
+                            title: "Exclude AR Mesh",
+                            message: "Does not convert persisted AR mesh vertices into supplementary interpolation points. Sessions without mesh data are unchanged. Reprocess to test whether 3D spikes come from AR geometry samples."
+                        )
+                    }
+                }
+
+                cardDivider
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        settingLabel("Grid Smoothing Passes")
+                        Spacer()
+                        HStack(spacing: 6) {
+                            Text("\(settings.gridSmoothingIterations)")
+                                .font(.system(.body, design: .monospaced, weight: .semibold))
+                                .foregroundStyle(Theme.primary)
+                            InfoButton(
+                                title: "Grid Smoothing Passes",
+                                message: "Number of Laplacian smoothing iterations applied to the elevation grid after interpolation and spike removal (0 = none, 5 = maximum blur). Reprocess to apply. Default 1 matches previous app behaviour."
+                            )
+                        }
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(settings.gridSmoothingIterations) },
+                            set: { settings.gridSmoothingIterations = Int($0.rounded()) }
+                        ),
+                        in: 0...5,
+                        step: 1
                     )
+                    .tint(Theme.primary)
                 }
             }
         }

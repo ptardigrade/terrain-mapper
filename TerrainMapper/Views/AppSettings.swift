@@ -40,6 +40,15 @@ final class AppSettings: ObservableObject {
     /// from the captured survey points.
     @AppStorage("excludePointElevation") var excludePointElevation: Bool = false
 
+    /// When enabled, path-track breadcrumbs are not passed into terrain interpolation.
+    @AppStorage("excludePathTrackFromInterpolation") var excludePathTrackFromInterpolation: Bool = false
+
+    /// When enabled, AR mesh vertices are not converted into supplementary grid points.
+    @AppStorage("excludeARMeshFromInterpolation") var excludeARMeshFromInterpolation: Bool = false
+
+    /// Laplacian smoothing passes on the elevation grid after interpolation (0–5).
+    @AppStorage("gridSmoothingIterations") var gridSmoothingIterations: Int = 1
+
     // MARK: - Export
 
     /// Persisted comma-separated raw values of the selected export formats.
@@ -77,5 +86,8 @@ final class AppSettings: ObservableObject {
         pipeline.enableGeoidCorrection = enableGeoidCorrection
         pipeline.madThreshold        = madThreshold
         pipeline.excludePointElevation = excludePointElevation
+        pipeline.excludePathTrackFromInterpolation = excludePathTrackFromInterpolation
+        pipeline.excludeARMeshFromInterpolation = excludeARMeshFromInterpolation
+        pipeline.gridSmoothingIterations = min(5, max(0, gridSmoothingIterations))
     }
 }
