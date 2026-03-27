@@ -32,15 +32,13 @@ final class AppSettings: ObservableObject {
     /// MAD threshold for outlier detection.
     @AppStorage("madThreshold") var madThreshold: Double = 3.5
 
-    // MARK: - Elevation calibration
+    // MARK: - Diagnostic
 
-    /// Whether a manual elevation offset is applied during processing.
-    @AppStorage("elevationOffsetEnabled") var elevationOffsetEnabled: Bool = false
-
-    /// Fixed vertical offset in metres added to all ground elevations during processing.
-    /// Positive shifts elevations up; negative shifts down.
-    /// Useful to correct GPS altitude bias against a known benchmark.
-    @AppStorage("elevationOffset") var elevationOffset: Double = 0.0
+    /// When enabled, survey capture point elevations are flattened to the median
+    /// of non-capture sources (path track / AR mesh) before interpolation.
+    /// Useful for diagnosing whether elevation spikes in the 3D model originate
+    /// from the captured survey points.
+    @AppStorage("excludePointElevation") var excludePointElevation: Bool = false
 
     // MARK: - Export
 
@@ -78,6 +76,6 @@ final class AppSettings: ObservableObject {
         pipeline.interpolationMethod = interpolationMethod
         pipeline.enableGeoidCorrection = enableGeoidCorrection
         pipeline.madThreshold        = madThreshold
-        pipeline.elevationOffset = elevationOffsetEnabled ? elevationOffset : 0.0
+        pipeline.excludePointElevation = excludePointElevation
     }
 }

@@ -24,8 +24,8 @@ struct SettingsView: View {
                 .padding(.top, 16)
 
                 sectionGroup("Processing")     { processingCard }
-                sectionGroup("Elevation Calibration") { calibrationCard }
                 sectionGroup("Export Formats") { exportCard }
+                sectionGroup("Diagnostic")     { diagnosticCard }
                 sectionGroup("Display")        { displayCard }
             }
             .padding(.horizontal, 16)
@@ -210,54 +210,26 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Elevation calibration card
+    // MARK: - Diagnostic card
 
-    private var calibrationCard: some View {
+    private var diagnosticCard: some View {
         card {
-            VStack(spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        settingLabel("Apply Elevation Offset")
-                        Text("Fixed vertical shift applied during processing")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.onSurfaceVariant)
-                    }
-                    Spacer()
-                    HStack(spacing: 6) {
-                        Toggle("", isOn: $settings.elevationOffsetEnabled)
-                            .tint(Theme.primary)
-                            .labelsHidden()
-                        InfoButton(
-                            title: "Elevation Offset",
-                            message: "Shifts all elevation values by a fixed amount. Use this when a known benchmark shows your GPS readings are consistently high or low — enter a negative value to lower elevations, positive to raise them."
-                        )
-                    }
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    settingLabel("Exclude Point Elevation")
+                    Text("Flatten survey point Z to isolate spike sources")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.onSurfaceVariant)
                 }
-
-                if settings.elevationOffsetEnabled {
-                    cardDivider
-
-                    HStack {
-                        Text("Vertical Delta (Z)")
-                            .font(.subheadline)
-                            .foregroundStyle(Theme.onSurfaceVariant)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            TextField("0.000", value: $settings.elevationOffset,
-                                      format: .number.precision(.fractionLength(3)))
-                                .keyboardType(.numbersAndPunctuation)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 90)
-                                .font(.system(.body, design: .monospaced, weight: .semibold))
-                                .foregroundStyle(Theme.primary)
-                            Text("m")
-                                .font(.caption)
-                                .foregroundStyle(Theme.onSurfaceVariant.opacity(0.6))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Theme.surfaceContainerHigh, in: RoundedRectangle(cornerRadius: 8))
-                    }
+                Spacer()
+                HStack(spacing: 6) {
+                    Toggle("", isOn: $settings.excludePointElevation)
+                        .tint(Theme.primary)
+                        .labelsHidden()
+                    InfoButton(
+                        title: "Exclude Point Elevation",
+                        message: "Replaces the elevation of manually captured survey points with a flat median value during mesh and contour generation. Path-track and AR mesh elevations are preserved. Use this to test whether geometric spike artifacts in the 3D model originate from the survey capture points."
+                    )
                 }
             }
         }

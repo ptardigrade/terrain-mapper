@@ -30,9 +30,10 @@ final class ProcessingPipeline: ObservableObject {
     var enableGeoidCorrection: Bool = true
     var madThreshold:       Double = 3.5
 
-    /// Optional vertical offset applied to all ground elevations after geoid correction.
-    /// Positive shifts up, negative shifts down.  0.0 = no adjustment.
-    var elevationOffset: Double = 0.0
+    /// When true, survey capture point elevations are flattened to the median
+    /// of other elevation sources before interpolation.  Diagnostic toggle to
+    /// isolate whether 3D model spikes originate from capture-point data.
+    var excludePointElevation: Bool = false
 
     // MARK: - Progress reporting
 
@@ -91,7 +92,7 @@ final class ProcessingPipeline: ObservableObject {
         let capturedInterpolationMethod = interpolationMethod
         let capturedGeoidEnabled        = enableGeoidCorrection
         let capturedMadThreshold        = madThreshold
-        let capturedElevationOffset     = elevationOffset
+        let capturedExcludePointElev     = excludePointElevation
         let capturedArkitPositions      = session.arkitPositions
         let capturedArkitHeading        = session.arkitAnchorHeading
         let capturedMeshVertices        = arMeshVertices
@@ -108,7 +109,7 @@ final class ProcessingPipeline: ObservableObject {
                 interpolationMethod:   capturedInterpolationMethod,
                 enableGeoidCorrection: capturedGeoidEnabled,
                 madThreshold:          capturedMadThreshold,
-                elevationOffset:       capturedElevationOffset,
+                excludePointElevation: capturedExcludePointElev,
                 arkitPositions:        capturedArkitPositions,
                 arkitAnchorHeading:    capturedArkitHeading,
                 arMeshVertices:        capturedMeshVertices,
@@ -133,7 +134,7 @@ final class ProcessingPipeline: ObservableObject {
         interpolationMethod:  InterpolationMethod,
         enableGeoidCorrection: Bool,
         madThreshold:         Double,
-        elevationOffset:      Double,
+        excludePointElevation: Bool,
         arkitPositions:       [String: [Double]]?,
         arkitAnchorHeading:   Double?,
         arMeshVertices:       [[Float]],
@@ -213,32 +214,7 @@ final class ProcessingPipeline: ObservableObject {
         geo.correct(points: &points)
         geo.correct(points: &pathPoints)
 
-        // ── 4b. Elevation offset ──────────────────────────────────────────
-        if elevationOffset != 0 {
-            updateProgress("Applying elevation offset…")
-            for i in points.indices {
-                let p = points[i]
-                points[i] = SurveyPoint(
-                    id:                  p.id,
-                    timestamp:           p.timestamp,
-                    latitude:            p.latitude,
-                    longitude:           p.longitude,
-                    fusedAltitude:       p.fusedAltitude      + elevationOffset,
-                    groundElevation:     p.groundElevation    + elevationOffset,
-                    lidarDistance:       p.lidarDistance,
-                    gpsAltitude:         p.gpsAltitude,
-                    baroAltitudeDelta:   p.baroAltitudeDelta,
-                    tiltAngle:           p.tiltAngle,
-                    horizontalAccuracy:  p.horizontalAccuracy,
-                    verticalAccuracy:    p.verticalAccuracy,
-                    isOutlier:           p.isOutlier,
-                    captureType:         p.captureType,
-                    interpolationWeight: p.interpolationWeight
-                )
-            }
-        }
-
-        // ── 4c. Integrate AR mesh vertices as supplementary points ────────
+        // ── 4b. Integrate AR mesh vertices as supplementary points ────────
         let surveyOnlyPoints = points.filter { !$0.isOutlier }
         var validPoints = surveyOnlyPoints
         if !arMeshVertices.isEmpty,
@@ -251,6 +227,49 @@ final class ProcessingPipeline: ObservableObject {
                 anchorHeadingDeg: heading
             )
             validPoints.append(contentsOf: meshPts)
+        }
+
+        // ── 4c. Flatten capture-point elevations (diagnostic toggle) ─────
+        // When excludePointElevation is enabled, replace the groundElevation
+        // of survey capture points with the median of non-capture sources
+        // (path track + AR mesh) so that only those sources shape the terrain.
+        // The capture points still provide horizontal positioning for the grid
+        // bounding box and convex hull — only their Z contribution is removed.
+        if excludePointElevation {
+            updateProgress("Excluding point elevations…")
+            let captureCount = surveyOnlyPoints.count
+            var refElevations = pathPoints.map(\.groundElevation)
+            if validPoints.count > captureCount {
+                refElevations += validPoints[captureCount...].map(\.groundElevation)
+            }
+            let flatElev: Double
+            if refElevations.count >= 2 {
+                let sorted = refElevations.sorted()
+                flatElev = sorted[sorted.count / 2]
+            } else {
+                let allElevs = validPoints.map(\.groundElevation).sorted()
+                flatElev = allElevs.isEmpty ? 0 : allElevs[allElevs.count / 2]
+            }
+            for i in 0..<captureCount {
+                let p = validPoints[i]
+                validPoints[i] = SurveyPoint(
+                    id:                  p.id,
+                    timestamp:           p.timestamp,
+                    latitude:            p.latitude,
+                    longitude:           p.longitude,
+                    fusedAltitude:       p.fusedAltitude,
+                    groundElevation:     flatElev,
+                    lidarDistance:       p.lidarDistance,
+                    gpsAltitude:         p.gpsAltitude,
+                    baroAltitudeDelta:   p.baroAltitudeDelta,
+                    tiltAngle:           p.tiltAngle,
+                    horizontalAccuracy:  p.horizontalAccuracy,
+                    verticalAccuracy:    p.verticalAccuracy,
+                    isOutlier:           p.isOutlier,
+                    captureType:         p.captureType,
+                    interpolationWeight: p.interpolationWeight
+                )
+            }
         }
 
         // Publish points (Stats tab can show basic info)
